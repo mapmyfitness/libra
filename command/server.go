@@ -71,6 +71,7 @@ func (c *ServerCommand) Run(args []string) int {
 	router, err := rest.MakeRouter(
 		rest.Post("/scale", api.ScaleHandler),
 		rest.Post("/capacity", api.CapacityHandler),
+		rest.Post("/grafana", api.GrafanaHandler),
 		rest.Get("/backends", api.BackendsHandler),
 		rest.Get("/ping", api.PingHandler),
 		rest.Get("/", api.HomeHandler),
