@@ -71,9 +71,9 @@ func GrafanaHandler(w rest.ResponseWriter, r *rest.Request) {
 	var amount int
 	// TODO: Right now this only grabs the first match. Really, we should take all of them and average them together
 	if t.EvalMatches[0].Value < mb.MinThreshold {
-		amount = mb.MinActionCount
+		amount = -mb.MinActionCount
 	} else if t.EvalMatches[0].Value > mb.MaxThreshold {
-		amount = -mb.MaxActionCount
+		amount = mb.MaxActionCount
 	} else {
 		w.WriteHeader(http.StatusOK)
 		return
