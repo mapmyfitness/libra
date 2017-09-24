@@ -1,5 +1,5 @@
 # Libra
-Libra autoscales [Nomad](nomadproject.io) task groups so you don't have to. View the API documentation [here](https://underarmour.github.io/libra).
+Libra autoscales [Nomad](https://nomadproject.io) task groups so you don't have to. View the API documentation [here](https://underarmour.github.io/libra).
 
 ## Design
 Libra takes heavy inspiration from the design of Nomad itself and uses a client/server model. Much like Nomad, the Libra CLI makes HTTP API calls to the Libra server.
