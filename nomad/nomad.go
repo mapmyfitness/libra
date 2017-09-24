@@ -28,42 +28,57 @@ func NewClient(c Config) (*api.Client, error) {
 }
 
 // Scale increases or decreases the count of a task group
-func Scale(client *api.Client, jobID, groupID string, scale, min, max int) (string, int, error) {
+func Scale(client *api.Client, jobID, group string, scale, min, max int) (string, int, error) {
 	job, _, err := client.Jobs().Info(jobID, &api.QueryOptions{})
+	newCount := -1
 	if err != nil {
 		return "", 0, err
 	}
-	oldCount := *job.TaskGroups[0].Count
-	newCount := oldCount + scale
-	if newCount < min || newCount > max {
-		return "", oldCount, errors.New("the new group count (" + strconv.Itoa(newCount) + ") is outside of the configured range (" + strconv.Itoa(min) + "-" + strconv.Itoa(max) + ")")
+	for _, tg := range job.TaskGroups {
+		if *tg.Name == group {
+			oldCount := *tg.Count
+			newCount = oldCount + scale
+			if newCount < min || newCount > max {
+				return "", oldCount, errors.New("the new group count (" + strconv.Itoa(newCount) + ") is outside of the configured range (" + strconv.Itoa(min) + "-" + strconv.Itoa(max) + ")")
+			}
+			tg.Count = &newCount
+		}
 	}
-	job.TaskGroups[0].Count = &newCount
-	resp, _, _ := client.Jobs().Register(job, &api.WriteOptions{})
-	return resp.EvalID, newCount, nil
+	if newCount > -1 {
+		resp, _, _ := client.Jobs().Register(job, &api.WriteOptions{})
+		return resp.EvalID, newCount, nil
+	} else {
+		return "", -1, errors.New("could not find task group " + group + " in job " + jobID)
+	}
 }
 
 // Restart restarts a job to get the latest docker image
 func Restart(client *api.Client, jobID, group, task, image string) (string, error) {
+	found := false
 	job, _, err := client.Jobs().Info(jobID, &api.QueryOptions{})
 	if err != nil {
 		return "", err
 	}
 	for _, tg := range job.TaskGroups {
-		if *tg.Name == group {
+		if *tg.Name == group || group == "any" {
 			for _, t := range tg.Tasks {
-				if t.Name == task {
+				if t.Name == task || task == "any" {
 					t.Config["image"] = image
+					found = true
 				}
 			}
-			resp, _, err := client.Jobs().Register(job, &api.WriteOptions{})
-			if err != nil {
-				return "", err
-			}
-			return resp.EvalID, nil
 		}
 	}
-	return "", errors.New("could not find task group " + group + " in job " + jobID)
+	if found {
+		resp, _, err := client.Jobs().Register(job, &api.WriteOptions{})
+		if err != nil {
+			return "", err
+		}
+		return resp.EvalID, nil
+	} else {
+		return "", errors.New("could not find task group " + group + " in job " + jobID)
+	}
+
 }
 
 // SetCapacity sets the count of a task group

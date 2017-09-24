@@ -44,7 +44,9 @@ func (c *ServerCommand) Run(args []string) int {
 		return 1
 	}
 
-	os.Setenv("LIBRA_CONFIG_DIR", c.ConfDir)
+	if os.Getenv("LIBRA_CONFIG_DIR") == "" || c.ConfDir != "/etc/libra"{
+		os.Setenv("LIBRA_CONFIG_DIR", c.ConfDir)
+	}
 	s := rest.NewApi()
 	logger := logrus.New()
 	w := logger.Writer()

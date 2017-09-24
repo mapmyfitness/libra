@@ -1,5 +1,5 @@
 # Libra
-Libra autoscales [Nomad](nomadproject.io) task groups so you don't have to. View the API documentation [here](https://underarmour.github.io/libra).
+Libra autoscales [Nomad](https://nomadproject.io) task groups so you don't have to. View the API documentation [here](https://underarmour.github.io/libra).
 
 ## Design
 Libra takes heavy inspiration from the design of Nomad itself and uses a client/server model. Much like Nomad, the Libra CLI makes HTTP API calls to the Libra server.
@@ -19,7 +19,7 @@ The skeleton of this project is from [jippi/nomad-auto-scale](https://github.com
 * Handle Nomad errors more robustly
 
 ## Configuration
-You can (and probably should) configure five environment variables as well, `LIBRA_ADDR`, `LIBRA_CONFIG`, `GRAPHITE_PASSWORD`, `AWS_ACCESS_KEY_ID`, and `AWS_SECRET_ACCESS_KEY`.
+You can (and probably should) configure five environment variables as well, `LIBRA_ADDR`, `LIBRA_CONFIG_DIR`, `GRAPHITE_PASSWORD`, `AWS_ACCESS_KEY_ID`, and `AWS_SECRET_ACCESS_KEY`.
 
 Libra gets most of its configuration from HCL config files located in a config directory (default `/etc/libra`). Here's an example `config.hcl` file:
 
