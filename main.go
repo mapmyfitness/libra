@@ -16,20 +16,11 @@ func Run(args []string) int {
 }
 
 func RunCustom(args []string, commands map[string]cli.CommandFactory) int {
-	// Build the commands to include in the help now.
-	commandsInclude := make([]string, 0, len(commands))
-	for k := range commands {
-		commandsInclude = append(commandsInclude, k)
-	}
+	c := cli.NewCLI("libra", VersionString())
+	c.Args = args
+	c.Commands = commands
 
-	cli := &cli.CLI{
-		Args:     args,
-		Commands: commands,
-		HelpFunc: cli.FilteredHelpFunc(commandsInclude, cli.BasicHelpFunc("libra")),
-		Version:  VersionString(),
-	}
-
-	exitCode, err := cli.Run()
+	exitCode, err := c.Run()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error executing CLI: %s\n", err.Error())
 		return 1
