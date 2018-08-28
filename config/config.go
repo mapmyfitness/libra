@@ -22,6 +22,10 @@ func NewConfig(path string) (*RootConfig, error) {
 
 	fileList := []string{}
 	err := filepath.Walk(configDir, func(path string, f os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+
 		if !f.IsDir() {
 			fileList = append(fileList, path)
 		}
