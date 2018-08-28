@@ -71,6 +71,31 @@ func InitializeBackends(backends map[string]structs.Backend) (ConfiguredBackends
 
 			configuredBackends[name] = connection
 
+		case "prometheus":
+			c, err := config.NewConfig(os.Getenv("LIBRA_CONFIG_DIR"))
+			if err != nil {
+				log.Errorf("Failed to read or parse config file: %s", err)
+				return nil, err
+			}
+
+			conf := c.Backends[name]
+
+			client, err := NewQueryAPI(conf.Host)
+			if err != nil {
+				return nil, err
+			}
+
+			connection, err := NewPrometheusBackend(name, PrometheusConfig{
+				Kind:     conf.Kind,
+				Name:     conf.Name,
+			}, client)
+
+			if err != nil {
+				return nil, fmt.Errorf("Bad configuration for %s: %s", name, err)
+			}
+
+			configuredBackends[name] = connection
+
 		default:
 			log.Fatalf("unknown backend type '%s' for backend %s", backendType, name)
 			return nil, fmt.Errorf("unknown backend %s", backendType)

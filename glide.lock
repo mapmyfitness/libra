@@ -1,5 +1,5 @@
-hash: 0c5bbe2013a70f1ba058216b3dd3c504494ed0a766b0d2d1eab668e8119e7b46
-updated: 2018-08-28T08:57:20.230108+01:00
+hash: ee819c4258c71b6b711c216adee2891914b520092ed1424c06705baca0fe82a8
+updated: 2018-08-28T09:32:32.618976+01:00
 imports:
 - name: github.com/ant0ine/go-json-rest
   version: ce4b71cdf7ba29ef443d704bd923f5bbf281ee30
@@ -104,7 +104,7 @@ imports:
 - name: github.com/mattn/go-isatty
   version: 6ca4dbf54d38eea1a992b3c722a76a5d1c4cb25c
 - name: github.com/mitchellh/cli
-  version: 3d22a244be8aa6fb16ac24af0e195c08b7d973aa
+  version: ~1.0.0
 - name: github.com/mitchellh/copystructure
   version: 9a1b6f44e8da0e0e374624fb0a825a231b00c537
 - name: github.com/mitchellh/go-homedir
@@ -121,6 +121,14 @@ imports:
   - cmd
   - cmd/install
   - match
+- name: github.com/prometheus/client_golang
+  version: c5b7fccd204277076155f10851dad72b76a49317
+  subpackages:
+  - api/prometheus
+- name: github.com/prometheus/common
+  version: c7de2306084e37d54b8be01f3541a8464345e9a5
+  subpackages:
+  - model
 - name: github.com/sirupsen/logrus
   version: 3e01752db0189b9157070a0e1668a620f9a85da2
 - name: github.com/ugorji/go
@@ -132,6 +140,11 @@ imports:
   subpackages:
   - blake2b
   - ssh/terminal
+- name: golang.org/x/net
+  version: 8a410e7b638dca158bf9e766925842f6651ff828
+  subpackages:
+  - context
+  - context/ctxhttp
 - name: golang.org/x/sys
   version: d99a578cf41bfccdeaf48b0845c823a4b8b0ad5e
   subpackages:
