@@ -32,13 +32,14 @@ For more details on the specifics of upgrading, see the [upgrading page](/docs/u
 
 <table class="table table-bordered table-striped">
   <tr>
-    <th>Version</th>
+    <th>Consul Version</th>
     <th>Protocol Compatibility</th>
   </tr>
   <tr>
     <td>0.1 - 0.3</td>
     <td>1</td>
   </tr>
+  <tr>
     <td>0.4</td>
     <td>1, 2</td>
   </tr>
@@ -51,10 +52,9 @@ For more details on the specifics of upgrading, see the [upgrading page](/docs/u
     <td>1, 2, 3</td>
   </tr>
   <tr>
-    <td>0.7 - 0.8</td>
+    <td>>= 0.7</td>
     <td>2, 3. Will automatically use protocol > 2 when speaking to compatible agents</td>
   </tr>
 </table>
 
 -> **Note:** Raft Protocol is versioned separately, but maintains compatibility with at least one prior version. See [here](https://www.consul.io/docs/upgrade-specific.html#raft-protocol-version-compatibility) for details.
-

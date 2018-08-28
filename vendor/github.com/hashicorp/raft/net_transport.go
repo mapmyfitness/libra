@@ -2,6 +2,7 @@ package raft
 
 import (
 	"bufio"
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -56,7 +57,7 @@ is not known if there is an error.
 
 */
 type NetworkTransport struct {
-	connPool     map[string][]*netConn
+	connPool     map[ServerAddress][]*netConn
 	connPoolLock sync.Mutex
 
 	consumeCh chan RPC
@@ -68,14 +69,43 @@ type NetworkTransport struct {
 
 	maxPool int
 
+	serverAddressProvider ServerAddressProvider
+
 	shutdown     bool
 	shutdownCh   chan struct{}
 	shutdownLock sync.Mutex
 
 	stream StreamLayer
 
+	// streamCtx is used to cancel existing connection handlers.
+	streamCtx     context.Context
+	streamCancel  context.CancelFunc
+	streamCtxLock sync.RWMutex
+
 	timeout      time.Duration
 	TimeoutScale int
+}
+
+// NetworkTransportConfig encapsulates configuration for the network transport layer.
+type NetworkTransportConfig struct {
+	// ServerAddressProvider is used to override the target address when establishing a connection to invoke an RPC
+	ServerAddressProvider ServerAddressProvider
+
+	Logger *log.Logger
+
+	// Dialer
+	Stream StreamLayer
+
+	// MaxPool controls how many connections we will pool
+	MaxPool int
+
+	// Timeout is used to apply I/O deadlines. For InstallSnapshot, we multiply
+	// the timeout by (SnapshotSize / TimeoutScale).
+	Timeout time.Duration
+}
+
+type ServerAddressProvider interface {
+	ServerAddr(id ServerID) (ServerAddress, error)
 }
 
 // StreamLayer is used with the NetworkTransport to provide
@@ -84,11 +114,11 @@ type StreamLayer interface {
 	net.Listener
 
 	// Dial is used to create a new outgoing connection
-	Dial(address string, timeout time.Duration) (net.Conn, error)
+	Dial(address ServerAddress, timeout time.Duration) (net.Conn, error)
 }
 
 type netConn struct {
-	target string
+	target ServerAddress
 	conn   net.Conn
 	r      *bufio.Reader
 	w      *bufio.Writer
@@ -112,6 +142,32 @@ type netPipeline struct {
 	shutdownLock sync.Mutex
 }
 
+// NewNetworkTransportWithConfig creates a new network transport with the given config struct
+func NewNetworkTransportWithConfig(
+	config *NetworkTransportConfig,
+) *NetworkTransport {
+	if config.Logger == nil {
+		config.Logger = log.New(os.Stderr, "", log.LstdFlags)
+	}
+	trans := &NetworkTransport{
+		connPool:              make(map[ServerAddress][]*netConn),
+		consumeCh:             make(chan RPC),
+		logger:                config.Logger,
+		maxPool:               config.MaxPool,
+		shutdownCh:            make(chan struct{}),
+		stream:                config.Stream,
+		timeout:               config.Timeout,
+		TimeoutScale:          DefaultTimeoutScale,
+		serverAddressProvider: config.ServerAddressProvider,
+	}
+
+	// Create the connection context and then start our listener.
+	trans.setupStreamContext()
+	go trans.listen()
+
+	return trans
+}
+
 // NewNetworkTransport creates a new network transport with the given dialer
 // and listener. The maxPool controls how many connections we will pool. The
 // timeout is used to apply I/O deadlines. For InstallSnapshot, we multiply
@@ -125,10 +181,12 @@ func NewNetworkTransport(
 	if logOutput == nil {
 		logOutput = os.Stderr
 	}
-	return NewNetworkTransportWithLogger(stream, maxPool, timeout, log.New(logOutput, "", log.LstdFlags))
+	logger := log.New(logOutput, "", log.LstdFlags)
+	config := &NetworkTransportConfig{Stream: stream, MaxPool: maxPool, Timeout: timeout, Logger: logger}
+	return NewNetworkTransportWithConfig(config)
 }
 
-// NewNetworkTransportWithLogger creates a new network transport with the given dialer
+// NewNetworkTransportWithLogger creates a new network transport with the given logger, dialer
 // and listener. The maxPool controls how many connections we will pool. The
 // timeout is used to apply I/O deadlines. For InstallSnapshot, we multiply
 // the timeout by (SnapshotSize / TimeoutScale).
@@ -138,21 +196,23 @@ func NewNetworkTransportWithLogger(
 	timeout time.Duration,
 	logger *log.Logger,
 ) *NetworkTransport {
-	if logger == nil {
-		logger = log.New(os.Stderr, "", log.LstdFlags)
-	}
-	trans := &NetworkTransport{
-		connPool:     make(map[string][]*netConn),
-		consumeCh:    make(chan RPC),
-		logger:       logger,
-		maxPool:      maxPool,
-		shutdownCh:   make(chan struct{}),
-		stream:       stream,
-		timeout:      timeout,
-		TimeoutScale: DefaultTimeoutScale,
-	}
-	go trans.listen()
-	return trans
+	config := &NetworkTransportConfig{Stream: stream, MaxPool: maxPool, Timeout: timeout, Logger: logger}
+	return NewNetworkTransportWithConfig(config)
+}
+
+// setupStreamContext is used to create a new stream context. This should be
+// called with the stream lock held.
+func (n *NetworkTransport) setupStreamContext() {
+	ctx, cancel := context.WithCancel(context.Background())
+	n.streamCtx = ctx
+	n.streamCancel = cancel
+}
+
+// getStreamContext is used retrieve the current stream context.
+func (n *NetworkTransport) getStreamContext() context.Context {
+	n.streamCtxLock.RLock()
+	defer n.streamCtxLock.RUnlock()
+	return n.streamCtx
 }
 
 // SetHeartbeatHandler is used to setup a heartbeat handler
@@ -162,6 +222,31 @@ func (n *NetworkTransport) SetHeartbeatHandler(cb func(rpc RPC)) {
 	n.heartbeatFnLock.Lock()
 	defer n.heartbeatFnLock.Unlock()
 	n.heartbeatFn = cb
+}
+
+// CloseStreams closes the current streams.
+func (n *NetworkTransport) CloseStreams() {
+	n.connPoolLock.Lock()
+	defer n.connPoolLock.Unlock()
+
+	// Close all the connections in the connection pool and then remove their
+	// entry.
+	for k, e := range n.connPool {
+		for _, conn := range e {
+			conn.Release()
+		}
+
+		delete(n.connPool, k)
+	}
+
+	// Cancel the existing connections and create a new context. Both these
+	// operations must always be done with the lock held otherwise we can create
+	// connection handlers that are holding a context that will never be
+	// cancelable.
+	n.streamCtxLock.Lock()
+	n.streamCancel()
+	n.setupStreamContext()
+	n.streamCtxLock.Unlock()
 }
 
 // Close is used to stop the network transport.
@@ -183,8 +268,8 @@ func (n *NetworkTransport) Consumer() <-chan RPC {
 }
 
 // LocalAddr implements the Transport interface.
-func (n *NetworkTransport) LocalAddr() string {
-	return n.stream.Addr().String()
+func (n *NetworkTransport) LocalAddr() ServerAddress {
+	return ServerAddress(n.stream.Addr().String())
 }
 
 // IsShutdown is used to check if the transport is shutdown.
@@ -198,7 +283,7 @@ func (n *NetworkTransport) IsShutdown() bool {
 }
 
 // getExistingConn is used to grab a pooled connection.
-func (n *NetworkTransport) getPooledConn(target string) *netConn {
+func (n *NetworkTransport) getPooledConn(target ServerAddress) *netConn {
 	n.connPoolLock.Lock()
 	defer n.connPoolLock.Unlock()
 
@@ -214,8 +299,26 @@ func (n *NetworkTransport) getPooledConn(target string) *netConn {
 	return conn
 }
 
+// getConnFromAddressProvider returns a connection from the server address provider if available, or defaults to a connection using the target server address
+func (n *NetworkTransport) getConnFromAddressProvider(id ServerID, target ServerAddress) (*netConn, error) {
+	address := n.getProviderAddressOrFallback(id, target)
+	return n.getConn(address)
+}
+
+func (n *NetworkTransport) getProviderAddressOrFallback(id ServerID, target ServerAddress) ServerAddress {
+	if n.serverAddressProvider != nil {
+		serverAddressOverride, err := n.serverAddressProvider.ServerAddr(id)
+		if err != nil {
+			n.logger.Printf("[WARN] raft: Unable to get address for server id %v, using fallback address %v: %v", id, target, err)
+		} else {
+			return serverAddressOverride
+		}
+	}
+	return target
+}
+
 // getConn is used to get a connection from the pool.
-func (n *NetworkTransport) getConn(target string) (*netConn, error) {
+func (n *NetworkTransport) getConn(target ServerAddress) (*netConn, error) {
 	// Check for a pooled conn
 	if conn := n.getPooledConn(target); conn != nil {
 		return conn, nil
@@ -260,9 +363,9 @@ func (n *NetworkTransport) returnConn(conn *netConn) {
 
 // AppendEntriesPipeline returns an interface that can be used to pipeline
 // AppendEntries requests.
-func (n *NetworkTransport) AppendEntriesPipeline(target string) (AppendPipeline, error) {
+func (n *NetworkTransport) AppendEntriesPipeline(id ServerID, target ServerAddress) (AppendPipeline, error) {
 	// Get a connection
-	conn, err := n.getConn(target)
+	conn, err := n.getConnFromAddressProvider(id, target)
 	if err != nil {
 		return nil, err
 	}
@@ -272,19 +375,19 @@ func (n *NetworkTransport) AppendEntriesPipeline(target string) (AppendPipeline,
 }
 
 // AppendEntries implements the Transport interface.
-func (n *NetworkTransport) AppendEntries(target string, args *AppendEntriesRequest, resp *AppendEntriesResponse) error {
-	return n.genericRPC(target, rpcAppendEntries, args, resp)
+func (n *NetworkTransport) AppendEntries(id ServerID, target ServerAddress, args *AppendEntriesRequest, resp *AppendEntriesResponse) error {
+	return n.genericRPC(id, target, rpcAppendEntries, args, resp)
 }
 
 // RequestVote implements the Transport interface.
-func (n *NetworkTransport) RequestVote(target string, args *RequestVoteRequest, resp *RequestVoteResponse) error {
-	return n.genericRPC(target, rpcRequestVote, args, resp)
+func (n *NetworkTransport) RequestVote(id ServerID, target ServerAddress, args *RequestVoteRequest, resp *RequestVoteResponse) error {
+	return n.genericRPC(id, target, rpcRequestVote, args, resp)
 }
 
 // genericRPC handles a simple request/response RPC.
-func (n *NetworkTransport) genericRPC(target string, rpcType uint8, args interface{}, resp interface{}) error {
+func (n *NetworkTransport) genericRPC(id ServerID, target ServerAddress, rpcType uint8, args interface{}, resp interface{}) error {
 	// Get a conn
-	conn, err := n.getConn(target)
+	conn, err := n.getConnFromAddressProvider(id, target)
 	if err != nil {
 		return err
 	}
@@ -308,9 +411,9 @@ func (n *NetworkTransport) genericRPC(target string, rpcType uint8, args interfa
 }
 
 // InstallSnapshot implements the Transport interface.
-func (n *NetworkTransport) InstallSnapshot(target string, args *InstallSnapshotRequest, resp *InstallSnapshotResponse, data io.Reader) error {
+func (n *NetworkTransport) InstallSnapshot(id ServerID, target ServerAddress, args *InstallSnapshotRequest, resp *InstallSnapshotResponse, data io.Reader) error {
 	// Get a conn, always close for InstallSnapshot
-	conn, err := n.getConn(target)
+	conn, err := n.getConnFromAddressProvider(id, target)
 	if err != nil {
 		return err
 	}
@@ -346,13 +449,14 @@ func (n *NetworkTransport) InstallSnapshot(target string, args *InstallSnapshotR
 }
 
 // EncodePeer implements the Transport interface.
-func (n *NetworkTransport) EncodePeer(p string) []byte {
-	return []byte(p)
+func (n *NetworkTransport) EncodePeer(id ServerID, p ServerAddress) []byte {
+	address := n.getProviderAddressOrFallback(id, p)
+	return []byte(address)
 }
 
 // DecodePeer implements the Transport interface.
-func (n *NetworkTransport) DecodePeer(buf []byte) string {
-	return string(buf)
+func (n *NetworkTransport) DecodePeer(buf []byte) ServerAddress {
+	return ServerAddress(buf)
 }
 
 // listen is used to handling incoming connections.
@@ -370,12 +474,14 @@ func (n *NetworkTransport) listen() {
 		n.logger.Printf("[DEBUG] raft-net: %v accepted connection from: %v", n.LocalAddr(), conn.RemoteAddr())
 
 		// Handle the connection in dedicated routine
-		go n.handleConn(conn)
+		go n.handleConn(n.getStreamContext(), conn)
 	}
 }
 
-// handleConn is used to handle an inbound connection for its lifespan.
-func (n *NetworkTransport) handleConn(conn net.Conn) {
+// handleConn is used to handle an inbound connection for its lifespan. The
+// handler will exit when the passed context is cancelled or the connection is
+// closed.
+func (n *NetworkTransport) handleConn(connCtx context.Context, conn net.Conn) {
 	defer conn.Close()
 	r := bufio.NewReader(conn)
 	w := bufio.NewWriter(conn)
@@ -383,6 +489,13 @@ func (n *NetworkTransport) handleConn(conn net.Conn) {
 	enc := codec.NewEncoder(w, &codec.MsgpackHandle{})
 
 	for {
+		select {
+		case <-connCtx.Done():
+			n.logger.Println("[DEBUG] raft-net: stream layer is closed")
+			return
+		default:
+		}
+
 		if err := n.handleCommand(r, dec, enc); err != nil {
 			if err != io.EOF {
 				n.logger.Printf("[ERR] raft-net: Failed to decode incoming command: %v", err)

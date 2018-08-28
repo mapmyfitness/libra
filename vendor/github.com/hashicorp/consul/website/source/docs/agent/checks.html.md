@@ -15,16 +15,21 @@ service. If not associated with a service, the check monitors the health of the 
 A check is defined in a configuration file or added at runtime over the HTTP interface. Checks
 created via the HTTP interface persist with that node.
 
-There are five different kinds of checks:
+There are several different kinds of checks:
 
 * Script + Interval - These checks depend on invoking an external application
   that performs the health check, exits with an appropriate exit code, and potentially
   generates some output. A script is paired with an invocation interval (e.g.
   every 30 seconds). This is similar to the Nagios plugin system. The output of
-  a script check is limited to 4K. Output larger than this will be truncated.
+  a script check is limited to 4KB. Output larger than this will be truncated.
   By default, Script checks will be configured with a timeout equal to 30 seconds.
   It is possible to configure a custom Script check timeout value by specifying the
-  `timeout` field in the check definition.
+  `timeout` field in the check definition. When the timeout is reached on Windows,
+  Consul will wait for any child processes spawned by the script to finish. For any
+  other system, Consul will attempt to force-kill the script and any child processes
+  it has spawned once the timeout has passed.
+  In Consul 0.9.0 and later, the agent must be configured with [`enable_script_checks`]
+  (/docs/agent/options.html#_enable_script_checks) set to `true` in order to enable script checks.
 
 * HTTP + Interval - These checks make an HTTP `GET` request every Interval (e.g.
   every 30 seconds) to the specified URL. The status of the service depends on
@@ -38,8 +43,8 @@ There are five different kinds of checks:
   configured with a request timeout equal to the check interval, with a max of
   10 seconds. It is possible to configure a custom HTTP check timeout value by
   specifying the `timeout` field in the check definition. The output of the
-  check is limited to roughly 4K. Responses larger than this will be truncated.
-  HTTP checks also support SSL. By default, a valid SSL certificate is expected.
+  check is limited to roughly 4KB. Responses larger than this will be truncated.
+  HTTP checks also support TLS. By default, a valid TLS certificate is expected.
   Certificate verification can be turned off by setting the `tls_skip_verify`
   field to `true` in the check definition.
 
@@ -58,31 +63,57 @@ There are five different kinds of checks:
   TCP check timeout value by specifying the `timeout` field in the check
   definition.
 
-* <a name="TTL"></a>Time to Live (TTL) - These checks retain their last known state for a given TTL.
-  The state of the check must be updated periodically over the HTTP interface. If an
-  external system fails to update the status within a given TTL, the check is
-  set to the failed state. This mechanism, conceptually similar to a dead man's switch,
-  relies on the application to directly report its health. For example, a healthy app
-  can periodically `PUT` a status update to the HTTP endpoint; if the app fails, the TTL will
-  expire and the health check enters a critical state. The endpoints used to
-  update health information for a given check are the
-  [pass endpoint](https://www.consul.io/api/agent.html#agent_check_pass)
-  and the [fail endpoint](https://www.consul.io/api/agent.html#agent_check_fail).
-  TTL checks also persist
-  their last known status to disk. This allows the Consul agent to restore the
-  last known status of the check across restarts. Persisted check status is
-  valid through the end of the TTL from the time of the last check.
+* <a name="TTL"></a>Time to Live (TTL) - These checks retain their last known
+  state for a given TTL.  The state of the check must be updated periodically
+  over the HTTP interface. If an external system fails to update the status
+  within a given TTL, the check is set to the failed state. This mechanism,
+  conceptually similar to a dead man's switch, relies on the application to
+  directly report its health. For example, a healthy app can periodically `PUT` a
+  status update to the HTTP endpoint; if the app fails, the TTL will expire and
+  the health check enters a critical state. The endpoints used to update health
+  information for a given check are:
+  [pass](/api/agent/check.html#ttl-check-pass),
+  [warn](/api/agent/check.html#ttl-check-warn),
+  [fail](/api/agent/check.html#ttl-check-fail), and
+  [update](/api/agent/check.html#ttl-check-update).  TTL
+  checks also persist their last known status to disk. This allows the Consul
+  agent to restore the last known status of the check across restarts.  Persisted
+  check status is valid through the end of the TTL from the time of the last
+  check.
 
 * Docker + Interval - These checks depend on invoking an external application which
-is packaged within a Docker Container. The application is triggered within the running
-container via the Docker Exec API. We expect that the Consul agent user has access
-to either the Docker HTTP API or the unix socket. Consul uses ```$DOCKER_HOST``` to
-determine the Docker API endpoint. The application is expected to run, perform a health
-check of the service running inside the container, and exit with an appropriate exit code.
-The check should be paired with an invocation interval. The shell on which the check
-has to be performed is configurable which makes it possible to run containers which
-have different shells on the same host. Check output for Docker is limited to
-4K. Any output larger than this will be truncated.
+  is packaged within a Docker Container. The application is triggered within the running
+  container via the Docker Exec API. We expect that the Consul agent user has access
+  to either the Docker HTTP API or the unix socket. Consul uses ```$DOCKER_HOST``` to
+  determine the Docker API endpoint. The application is expected to run, perform a health
+  check of the service running inside the container, and exit with an appropriate exit code.
+  The check should be paired with an invocation interval. The shell on which the check
+  has to be performed is configurable which makes it possible to run containers which
+  have different shells on the same host. Check output for Docker is limited to
+  4KB. Any output larger than this will be truncated. In Consul 0.9.0 and later, the agent
+  must be configured with [`enable_script_checks`](/docs/agent/options.html#_enable_script_checks)
+  set to `true` in order to enable Docker health checks.
+
+* gRPC + Interval - These checks are intended for applications that support the standard
+  [gRPC health checking protocol](https://github.com/grpc/grpc/blob/master/doc/health-checking.md).
+  The state of the check will be updated at the given interval by probing the configured
+  endpoint. By default, gRPC checks will be configured with a default timeout of 10 seconds.
+  It is possible to configure a custom timeout value by specifying the `timeout` field in
+  the check definition. gRPC checks will default to not using TLS, but TLS can be enabled by
+  setting `grpc_use_tls` in the check definition. If TLS is enabled, then by default, a valid
+  TLS certificate is expected. Certificate verification can be turned off by setting the
+  `tls_skip_verify` field to `true` in the check definition.
+
+* <a name="alias"></a>Alias - These checks alias the health state of another registered
+  node or service. The state of the check will be updated asynchronously,
+  but is nearly instant. For aliased services on the same agent, the local
+  state is monitored and no additional network resources are consumed. For
+  other services and nodes, the check maintains a blocking query over the
+  agent's connection with a current server and allows stale requests. If there
+  are any errors in watching the aliased node or service, the check state will be
+  critical. For the blocking query, the check will use the ACL token set
+  on the service or check definition or otherwise will fall back to the default ACL
+  token set with the agent (`acl_token`).
 
 ## Check Definition
 
@@ -93,7 +124,7 @@ A script check:
   "check": {
     "id": "mem-util",
     "name": "Memory utilization",
-    "script": "/usr/local/bin/check_mem.py",
+    "args": ["/usr/local/bin/check_mem.py", "-limit", "256MB"],
     "interval": "10s",
     "timeout": "1s"
   }
@@ -148,21 +179,48 @@ A Docker check:
 
 ```javascript
 {
-"check": {
+  "check": {
     "id": "mem-util",
     "name": "Memory utilization",
     "docker_container_id": "f972c95ebf0e",
     "shell": "/bin/bash",
-    "script": "/usr/local/bin/check_mem.py",
+    "args": ["/usr/local/bin/check_mem.py"],
     "interval": "10s"
   }
 }
 ```
 
-Each type of definition must include a `name` and may optionally
-provide an `id` and `notes` field. The `id` is set to the `name` if not
-provided. It is required that all checks have a unique ID per node: if names
-might conflict, unique IDs should be provided.
+A gRPC check:
+
+```javascript
+{
+  "check": {
+    "id": "mem-util",
+    "name": "Service health status",
+    "grpc": "127.0.0.1:12345",
+    "grpc_use_tls": true,
+    "interval": "10s"
+  }
+}
+```
+
+An alias check for a local service:
+
+```javascript
+{
+  "check": {
+    "id": "web-alias",
+    "alias_service": "web"
+  }
+}
+```
+
+Each type of definition must include a `name` and may optionally provide an
+`id` and `notes` field. The `id` must be unique per _agent_ otherwise only the
+last defined check with that `id` will be registered. If the `id` is not set
+and the check is embedded within a service definition a unique check id is
+generated. Otherwise, `id` will be set to `name`. If names might conflict,
+unique IDs should be provided.
 
 The `notes` field is opaque to Consul but can be used to provide a human-readable
 description of the current state of the check. With a script check, the field is
@@ -172,9 +230,11 @@ a TTL check via the HTTP interface can set the `notes` value.
 Checks may also contain a `token` field to provide an ACL token. This token is
 used for any interaction with the catalog for the check, including
 [anti-entropy syncs](/docs/internals/anti-entropy.html) and deregistration.
+For Alias checks, this token is used if a remote blocking query is necessary
+to watch the state of the aliased node or service.
 
-Script, TCP, Docker and HTTP checks must include an `interval` field. This field is
-parsed by Go's `time` package, and has the following
+Script, TCP, HTTP, Docker, and gRPC checks must include an `interval` field. This
+field is parsed by Go's `time` package, and has the following
 [formatting specification](https://golang.org/pkg/time/#ParseDuration):
 > A duration string is a possibly signed sequence of decimal numbers, each with
 > optional fraction and a unit suffix, such as "300ms", "-1.5h" or "2h45m".
@@ -192,8 +252,8 @@ any expected recoverable outage for the given service.
 
 To configure a check, either provide it as a `-config-file` option to the
 agent or place it inside the `-config-dir` of the agent. The file must
-end in the ".json" extension to be loaded by Consul. Check definitions can
-also be updated by sending a `SIGHUP` to the agent. Alternatively, the
+end in a ".json" or ".hcl" extension to be loaded by Consul. Check definitions
+can also be updated by sending a `SIGHUP` to the agent. Alternatively, the
 check can be registered dynamically using the [HTTP API](/api/index.html).
 
 ## Check Scripts
@@ -210,6 +270,10 @@ This is the only convention that Consul depends on. Any output of the script
 will be captured and stored in the `notes` field so that it can be viewed
 by human operators.
 
+In Consul 0.9.0 and later, the agent must be configured with
+[`enable_script_checks`](/docs/agent/options.html#_enable_script_checks) set to `true`
+in order to enable script checks.
+
 ## Initial Health Check Status
 
 By default, when checks are registered against a Consul agent, the state is set
@@ -223,7 +287,7 @@ health check definition, like so:
 {
   "check": {
     "id": "mem",
-    "script": "/bin/check_mem",
+    "args": ["/bin/check_mem", "-limit", "256MB"],
     "interval": "10s",
     "status": "passing"
   }
@@ -266,7 +330,7 @@ key in your configuration file.
     {
       "id": "chk1",
       "name": "mem",
-      "script": "/bin/check_mem",
+      "args": ["/bin/check_mem", "-limit", "256MB"],
       "interval": "5s"
     },
     {

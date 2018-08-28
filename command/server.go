@@ -105,7 +105,7 @@ func (c *ServerCommand) Synopsis() string {
 func loadRules() (*cron.Cron, []cron.EntryID, error) {
 	config, err := config.NewConfig(os.Getenv("LIBRA_CONFIG_DIR"))
 	if err != nil {
-		logrus.Errorf("Failed to read or parse config file: %s", err)
+		logrus.Fatalf("Failed to read or parse config file: %s", err)
 	}
 	logrus.Info("Loaded and parsed configuration file")
 	n, err := nomad.NewClient(config.Nomad)

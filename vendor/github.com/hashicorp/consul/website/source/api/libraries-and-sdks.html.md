@@ -43,7 +43,7 @@ the community.
     <a href="https://github.com/Verizon/helm">helm</a> - A native Scala client for interacting with Consul
   </li>
   <li>
-    <a href="https://github.com/OrbitzWorldwide/consul-client">consul-client</a> - Java client for the Consul HTTP API
+    <a href="https://github.com/rickfast/consul-client">consul-client</a> - Java client for the Consul HTTP API
   </li>
   <li>
     <a href="https://github.com/Ecwid/consul-api">consul-api</a> - Java client for the Consul HTTP API
@@ -57,9 +57,6 @@ the community.
   </li>
   <li>
     <a href="https://github.com/undeadlabs/discovery">discovery</a> - Erlang/OTP client for the Consul HTTP API
-  </li>
-  <li>
-    <a href="https://github.com/xaviershay/consul-client">consul-client</a> - Ruby client for the Consul HTTP API
   </li>
   <li>
     <a href="https://github.com/WeAreFarmGeek/diplomat">diplomat</a> - Ruby library to query Consul's KV-store and services directory
@@ -78,5 +75,8 @@ the community.
   </li>
   <li>
     <a href="https://github.com/cpageler93/ConsulSwift">ConsulSwift</a> - Swift client for the Consul HTTP API
+  </li>
+  <li>
+    <a href="https://github.com/oatpp/oatpp-consul">oatpp-consul</a> - C++ Consul integration for <a href="https://oatpp.io/">oatpp</a> applications
   </li>
 </ul>

@@ -1,5 +1,6 @@
 job "binstore-storagelocker" {
   region      = "fooregion"
+  namespace   = "foonamespace"
   type        = "batch"
   priority    = 52
   all_at_once = true
@@ -21,6 +22,7 @@ job "binstore-storagelocker" {
     health_check = "manual"
     min_healthy_time = "10s"
     healthy_deadline = "10m"
+    progress_deadline = "10m"
     auto_revert = true
     canary = 1
   }
@@ -47,6 +49,11 @@ job "binstore-storagelocker" {
       mode     = "delay"
     }
 
+    reschedule {
+       attempts = 5
+       interval = "12h"
+    }
+
     ephemeral_disk {
         sticky = true
         size = 150
@@ -57,8 +64,16 @@ job "binstore-storagelocker" {
         health_check = "checks"
         min_healthy_time = "1s"
         healthy_deadline = "1m"
+        progress_deadline = "1m"
         auto_revert = false
         canary = 2
+    }
+
+    migrate {
+        max_parallel = 2
+        health_check = "task_states"
+        min_healthy_time = "11s"
+        healthy_deadline = "11m"
     }
 
     task "binstore" {
@@ -86,14 +101,23 @@ job "binstore-storagelocker" {
 
       service {
         tags = ["foo", "bar"]
+        canary_tags = ["canary", "bam"]
         port = "http"
 
         check {
-          name     = "check-name"
-          type     = "tcp"
-          interval = "10s"
-          timeout  = "2s"
-          port     = "admin"
+          name         = "check-name"
+          type         = "tcp"
+          interval     = "10s"
+          timeout      = "2s"
+          port         = "admin"
+          grpc_service = "foo.Bar"
+          grpc_use_tls = true
+
+          check_restart {
+            limit = 3
+            grace = "10s"
+            ignore_warnings = true
+          }
         }
       }
 
@@ -129,6 +153,8 @@ job "binstore-storagelocker" {
 
       kill_timeout = "22s"
 
+      shutdown_delay = "11s"
+
       artifact {
         source = "http://foo.com/artifact"
 
@@ -158,6 +184,7 @@ job "binstore-storagelocker" {
         change_signal = "foo"
         splay = "10s"
         env = true
+        vault_grace = "33s"
       }
 
       template {

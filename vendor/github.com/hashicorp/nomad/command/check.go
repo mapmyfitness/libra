@@ -5,6 +5,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/posener/complete"
 )
 
 const (
@@ -35,7 +37,7 @@ Agent Check Options:
      Minimum number of peers that a server is expected to know.
 
   -min-servers
-     Minumum number of servers that a client is expected to know.
+     Minimum number of servers that a client is expected to know.
 `
 
 	return strings.TrimSpace(helpText)
@@ -44,6 +46,8 @@ Agent Check Options:
 func (c *AgentCheckCommand) Synopsis() string {
 	return "Displays health of the local Nomad agent"
 }
+
+func (c *AgentCheckCommand) Name() string { return "check" }
 
 func (c *AgentCheckCommand) Run(args []string) int {
 	var minPeers, minServers int
@@ -54,6 +58,13 @@ func (c *AgentCheckCommand) Run(args []string) int {
 	flags.IntVar(&minServers, "min-servers", 1, "")
 
 	if err := flags.Parse(args); err != nil {
+		return 1
+	}
+
+	args = flags.Args()
+	if len(args) > 0 {
+		c.Ui.Error("This command takes no arguments")
+		c.Ui.Error(commandErrorText(c))
 		return 1
 	}
 
@@ -126,4 +137,16 @@ func (c *AgentCheckCommand) checkClientHealth(clientStats map[string]string, min
 	}
 
 	return HealthPass
+}
+
+func (c *AgentCheckCommand) AutocompleteFlags() complete.Flags {
+	return mergeAutocompleteFlags(c.Meta.AutocompleteFlags(FlagSetClient),
+		complete.Flags{
+			"-min-peers":   complete.PredictAnything,
+			"-min-servers": complete.PredictAnything,
+		})
+}
+
+func (c *AgentCheckCommand) AutocompleteArgs() complete.Predictor {
+	return complete.PredictNothing
 }

@@ -18,7 +18,13 @@ import:
   subpackages:
   - api
 - package: github.com/mitchellh/cli
+  version: ~1.0.0
 - package: github.com/mitchellh/mapstructure
 - package: github.com/sirupsen/logrus
   version: ~1.0.0
 - package: gopkg.in/robfig/cron.v2
+- package: github.com/prometheus/client_golang
+  version: ~0.8.0
+- package: github.com/prometheus/common
+  subpackages:
+  - model

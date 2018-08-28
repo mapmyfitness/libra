@@ -2,11 +2,11 @@ package consul
 
 import (
 	"os"
-	"strings"
 	"testing"
 	"time"
 
-	"github.com/hashicorp/consul/agent/consul/structs"
+	"github.com/hashicorp/consul/acl"
+	"github.com/hashicorp/consul/agent/structs"
 	"github.com/hashicorp/consul/lib"
 	"github.com/hashicorp/consul/testrpc"
 	"github.com/hashicorp/net-rpc-msgpackrpc"
@@ -194,7 +194,7 @@ session "foo" {
 	var id2 string
 	s1.config.ACLEnforceVersion8 = true
 	err := msgpackrpc.CallWithCodec(codec, "Session.Apply", &arg, &id2)
-	if err == nil || !strings.Contains(err.Error(), permissionDenied) {
+	if !acl.IsErrPermissionDenied(err) {
 		t.Fatalf("err: %v", err)
 	}
 
@@ -220,7 +220,7 @@ session "foo" {
 	s1.config.ACLEnforceVersion8 = true
 	arg.Session.ID = id2
 	err = msgpackrpc.CallWithCodec(codec, "Session.Apply", &arg, &out)
-	if err == nil || !strings.Contains(err.Error(), permissionDenied) {
+	if !acl.IsErrPermissionDenied(err) {
 		t.Fatalf("err: %v", err)
 	}
 
@@ -539,8 +539,9 @@ func TestSession_ApplyTimers(t *testing.T) {
 }
 
 func TestSession_Renew(t *testing.T) {
-	t.Parallel()
-	ttl := time.Second
+	// This method is timing sensitive, disable Parallel
+	//t.Parallel()
+	ttl := 1 * time.Second
 	TTL := ttl.String()
 
 	dir1, s1 := testServerWithConfig(t, func(c *Config) {
@@ -770,7 +771,7 @@ session "foo" {
 	// Now turn on version 8 enforcement and the renew should be rejected.
 	s1.config.ACLEnforceVersion8 = true
 	err := msgpackrpc.CallWithCodec(codec, "Session.Renew", &renewR, &session)
-	if err == nil || !strings.Contains(err.Error(), permissionDenied) {
+	if !acl.IsErrPermissionDenied(err) {
 		t.Fatalf("err: %v", err)
 	}
 

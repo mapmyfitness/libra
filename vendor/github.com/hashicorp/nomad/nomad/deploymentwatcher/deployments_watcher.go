@@ -9,6 +9,8 @@ import (
 
 	"golang.org/x/time/rate"
 
+	memdb "github.com/hashicorp/go-memdb"
+	"github.com/hashicorp/nomad/nomad/state"
 	"github.com/hashicorp/nomad/nomad/structs"
 )
 
@@ -17,9 +19,10 @@ const (
 	// second
 	LimitStateQueriesPerSecond = 100.0
 
-	// CrossDeploymentEvalBatchDuration is the duration in which evaluations are
-	// batched across all deployment watchers before commiting to Raft.
-	CrossDeploymentEvalBatchDuration = 250 * time.Millisecond
+	// CrossDeploymentUpdateBatchDuration is the duration in which allocation
+	// desired transition and evaluation creation updates are batched across
+	// all deployment watchers before committing to Raft.
+	CrossDeploymentUpdateBatchDuration = 250 * time.Millisecond
 )
 
 var (
@@ -31,9 +34,6 @@ var (
 // DeploymentRaftEndpoints exposes the deployment watcher to a set of functions
 // to apply data transforms via Raft.
 type DeploymentRaftEndpoints interface {
-	// UpsertEvals is used to upsert a set of evaluations
-	UpsertEvals([]*structs.Evaluation) (uint64, error)
-
 	// UpsertJob is used to upsert a job
 	UpsertJob(job *structs.Job) (uint64, error)
 
@@ -47,35 +47,15 @@ type DeploymentRaftEndpoints interface {
 	// UpdateDeploymentAllocHealth is used to set the health of allocations in a
 	// deployment
 	UpdateDeploymentAllocHealth(req *structs.ApplyDeploymentAllocHealthRequest) (uint64, error)
-}
 
-// DeploymentStateWatchers are the set of functions required to watch objects on
-// behalf of a deployment
-type DeploymentStateWatchers interface {
-	// Evaluations returns the set of evaluations for the given job
-	Evaluations(args *structs.JobSpecificRequest, reply *structs.JobEvaluationsResponse) error
-
-	// Allocations returns the set of allocations that are part of the
-	// deployment.
-	Allocations(args *structs.DeploymentSpecificRequest, reply *structs.AllocListResponse) error
-
-	// List is used to list all the deployments in the system
-	List(args *structs.DeploymentListRequest, reply *structs.DeploymentListResponse) error
-
-	// GetDeployment is used to lookup a particular deployment.
-	GetDeployment(args *structs.DeploymentSpecificRequest, reply *structs.SingleDeploymentResponse) error
-
-	// GetJobVersions is used to lookup the versions of a job. This is used when
-	// rolling back to find the latest stable job
-	GetJobVersions(args *structs.JobVersionsRequest, reply *structs.JobVersionsResponse) error
-
-	// GetJob is used to lookup a particular job.
-	GetJob(args *structs.JobSpecificRequest, reply *structs.SingleJobResponse) error
+	// UpdateAllocDesiredTransition is used to update the desired transition
+	// for allocations.
+	UpdateAllocDesiredTransition(req *structs.AllocUpdateDesiredTransitionRequest) (uint64, error)
 }
 
 // Watcher is used to watch deployments and their allocations created
 // by the scheduler and trigger the scheduler when allocation health
-// transistions.
+// transitions.
 type Watcher struct {
 	enabled bool
 	logger  *log.Logger
@@ -83,23 +63,23 @@ type Watcher struct {
 	// queryLimiter is used to limit the rate of blocking queries
 	queryLimiter *rate.Limiter
 
-	// evalBatchDuration is the duration to batch eval creation across all
-	// deployment watchers
-	evalBatchDuration time.Duration
+	// updateBatchDuration is the duration to batch allocation desired
+	// transition and eval creation across all deployment watchers
+	updateBatchDuration time.Duration
 
 	// raft contains the set of Raft endpoints that can be used by the
 	// deployments watcher
 	raft DeploymentRaftEndpoints
 
-	// stateWatchers is the set of functions required to watch a deployment for
-	// state changes
-	stateWatchers DeploymentStateWatchers
+	// state is the state that is watched for state changes.
+	state *state.StateStore
 
 	// watchers is the set of active watchers, one per deployment
 	watchers map[string]*deploymentWatcher
 
-	// evalBatcher is used to batch the creation of evaluations
-	evalBatcher *EvalBatcher
+	// allocUpdateBatcher is used to batch the creation of evaluations and
+	// allocation desired transition updates
+	allocUpdateBatcher *AllocUpdateBatcher
 
 	// ctx and exitFn are used to cancel the watcher
 	ctx    context.Context
@@ -110,27 +90,31 @@ type Watcher struct {
 
 // NewDeploymentsWatcher returns a deployments watcher that is used to watch
 // deployments and trigger the scheduler as needed.
-func NewDeploymentsWatcher(logger *log.Logger, watchers DeploymentStateWatchers,
+func NewDeploymentsWatcher(logger *log.Logger,
 	raft DeploymentRaftEndpoints, stateQueriesPerSecond float64,
-	evalBatchDuration time.Duration) *Watcher {
+	updateBatchDuration time.Duration) *Watcher {
 
 	return &Watcher{
-		stateWatchers:     watchers,
-		raft:              raft,
-		queryLimiter:      rate.NewLimiter(rate.Limit(stateQueriesPerSecond), 100),
-		evalBatchDuration: evalBatchDuration,
-		logger:            logger,
+		raft:                raft,
+		queryLimiter:        rate.NewLimiter(rate.Limit(stateQueriesPerSecond), 100),
+		updateBatchDuration: updateBatchDuration,
+		logger:              logger,
 	}
 }
 
 // SetEnabled is used to control if the watcher is enabled. The watcher
-// should only be enabled on the active leader.
-func (w *Watcher) SetEnabled(enabled bool) error {
+// should only be enabled on the active leader. When being enabled the state is
+// passed in as it is no longer valid once a leader election has taken place.
+func (w *Watcher) SetEnabled(enabled bool, state *state.StateStore) {
 	w.l.Lock()
 	defer w.l.Unlock()
 
 	wasEnabled := w.enabled
 	w.enabled = enabled
+
+	if state != nil {
+		w.state = state
+	}
 
 	// Flush the state to create the necessary objects
 	w.flush()
@@ -139,8 +123,6 @@ func (w *Watcher) SetEnabled(enabled bool) error {
 	if enabled && !wasEnabled {
 		go w.watchDeployments(w.ctx)
 	}
-
-	return nil
 }
 
 // flush is used to clear the state of the watcher
@@ -157,7 +139,7 @@ func (w *Watcher) flush() {
 
 	w.watchers = make(map[string]*deploymentWatcher, 32)
 	w.ctx, w.exitFn = context.WithCancel(context.Background())
-	w.evalBatcher = NewEvalBatcher(w.evalBatchDuration, w.raft, w.ctx)
+	w.allocUpdateBatcher = NewAllocUpdateBatcher(w.updateBatchDuration, w.raft, w.ctx)
 }
 
 // watchDeployments is the long lived go-routine that watches for deployments to
@@ -166,23 +148,21 @@ func (w *Watcher) watchDeployments(ctx context.Context) {
 	dindex := uint64(1)
 	for {
 		// Block getting all deployments using the last deployment index.
-		resp, err := w.getDeploys(ctx, dindex)
+		deployments, idx, err := w.getDeploys(ctx, dindex)
 		if err != nil {
-			if err == context.Canceled || ctx.Err() == context.Canceled {
+			if err == context.Canceled {
 				return
 			}
 
-			w.logger.Printf("[ERR] nomad.deployments_watcher: failed to retrieve deploylements: %v", err)
+			w.logger.Printf("[ERR] nomad.deployments_watcher: failed to retrieve deployments: %v", err)
 		}
 
-		// Guard against npe
-		if resp == nil {
-			continue
-		}
+		// Update the latest index
+		dindex = idx
 
 		// Ensure we are tracking the things we should and not tracking what we
 		// shouldn't be
-		for _, d := range resp.Deployments {
+		for _, d := range deployments {
 			if d.Active() {
 				if err := w.add(d); err != nil {
 					w.logger.Printf("[ERR] nomad.deployments_watcher: failed to track deployment %q: %v", d.ID, err)
@@ -191,33 +171,44 @@ func (w *Watcher) watchDeployments(ctx context.Context) {
 				w.remove(d)
 			}
 		}
-
-		// Update the latest index
-		dindex = resp.Index
 	}
 }
 
 // getDeploys retrieves all deployments blocking at the given index.
-func (w *Watcher) getDeploys(ctx context.Context, index uint64) (*structs.DeploymentListResponse, error) {
-	// Build the request
-	args := &structs.DeploymentListRequest{
-		QueryOptions: structs.QueryOptions{
-			MinQueryIndex: index,
-		},
-	}
-	var resp structs.DeploymentListResponse
-
-	for resp.Index <= index {
-		if err := w.queryLimiter.Wait(ctx); err != nil {
-			return nil, err
-		}
-
-		if err := w.stateWatchers.List(args, &resp); err != nil {
-			return nil, err
-		}
+func (w *Watcher) getDeploys(ctx context.Context, minIndex uint64) ([]*structs.Deployment, uint64, error) {
+	resp, index, err := w.state.BlockingQuery(w.getDeploysImpl, minIndex, ctx)
+	if err != nil {
+		return nil, 0, err
 	}
 
-	return &resp, nil
+	return resp.([]*structs.Deployment), index, nil
+}
+
+// getDeploysImpl retrieves all deployments from the passed state store.
+func (w *Watcher) getDeploysImpl(ws memdb.WatchSet, state *state.StateStore) (interface{}, uint64, error) {
+
+	iter, err := state.Deployments(ws)
+	if err != nil {
+		return nil, 0, err
+	}
+
+	var deploys []*structs.Deployment
+	for {
+		raw := iter.Next()
+		if raw == nil {
+			break
+		}
+		deploy := raw.(*structs.Deployment)
+		deploys = append(deploys, deploy)
+	}
+
+	// Use the last index that affected the deployment table
+	index, err := state.Index("deployment")
+	if err != nil {
+		return nil, 0, err
+	}
+
+	return deploys, index, nil
 }
 
 // add adds a deployment to the watch list
@@ -240,24 +231,27 @@ func (w *Watcher) addLocked(d *structs.Deployment) (*deploymentWatcher, error) {
 		return nil, fmt.Errorf("deployment %q is terminal", d.ID)
 	}
 
-	// Already watched so no-op
-	if _, ok := w.watchers[d.ID]; ok {
+	// Already watched so just update the deployment
+	if w, ok := w.watchers[d.ID]; ok {
+		w.updateDeployment(d)
 		return nil, nil
 	}
 
 	// Get the job the deployment is referencing
-	args := &structs.JobSpecificRequest{
-		JobID: d.JobID,
-	}
-	var resp structs.SingleJobResponse
-	if err := w.stateWatchers.GetJob(args, &resp); err != nil {
+	snap, err := w.state.Snapshot()
+	if err != nil {
 		return nil, err
 	}
-	if resp.Job == nil {
+
+	job, err := snap.JobByID(nil, d.Namespace, d.JobID)
+	if err != nil {
+		return nil, err
+	}
+	if job == nil {
 		return nil, fmt.Errorf("deployment %q references unknown job %q", d.ID, d.JobID)
 	}
 
-	watcher := newDeploymentWatcher(w.ctx, w.queryLimiter, w.logger, w.stateWatchers, d, resp.Job, w)
+	watcher := newDeploymentWatcher(w.ctx, w.queryLimiter, w.logger, w.state, d, job, w)
 	w.watchers[d.ID] = watcher
 	return watcher, nil
 }
@@ -283,18 +277,21 @@ func (w *Watcher) remove(d *structs.Deployment) {
 // a watcher. If the deployment does not exist or is terminal an error is
 // returned.
 func (w *Watcher) forceAdd(dID string) (*deploymentWatcher, error) {
-	// Build the request
-	args := &structs.DeploymentSpecificRequest{DeploymentID: dID}
-	var resp structs.SingleDeploymentResponse
-	if err := w.stateWatchers.GetDeployment(args, &resp); err != nil {
+	snap, err := w.state.Snapshot()
+	if err != nil {
 		return nil, err
 	}
 
-	if resp.Deployment == nil {
+	deployment, err := snap.DeploymentByID(nil, dID)
+	if err != nil {
+		return nil, err
+	}
+
+	if deployment == nil {
 		return nil, fmt.Errorf("unknown deployment %q", dID)
 	}
 
-	return w.addLocked(resp.Deployment)
+	return w.addLocked(deployment)
 }
 
 // getOrCreateWatcher returns the deployment watcher for the given deployment ID.
@@ -360,10 +357,10 @@ func (w *Watcher) FailDeployment(req *structs.DeploymentFailRequest, resp *struc
 	return watcher.FailDeployment(req, resp)
 }
 
-// createEvaluation commits the given evaluation to Raft but batches the commit
-// with other calls.
-func (w *Watcher) createEvaluation(eval *structs.Evaluation) (uint64, error) {
-	return w.evalBatcher.CreateEval(eval).Results()
+// createUpdate commits the given allocation desired transition and evaluation
+// to Raft but batches the commit with other calls.
+func (w *Watcher) createUpdate(allocs map[string]*structs.DesiredTransition, eval *structs.Evaluation) (uint64, error) {
+	return w.allocUpdateBatcher.CreateUpdate(allocs, eval).Results()
 }
 
 // upsertJob commits the given job to Raft

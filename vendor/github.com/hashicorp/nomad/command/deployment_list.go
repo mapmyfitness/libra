@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/hashicorp/nomad/api"
+	"github.com/posener/complete"
 )
 
 type DeploymentListCommand struct {
@@ -15,7 +16,7 @@ func (c *DeploymentListCommand) Help() string {
 	helpText := `
 Usage: nomad deployment list [options]
 
-List is used to list the set of deployments tracked by Nomad.
+  List is used to list the set of deployments tracked by Nomad.
 
 General Options:
 
@@ -35,15 +36,30 @@ List Options:
 	return strings.TrimSpace(helpText)
 }
 
+func (c *DeploymentListCommand) AutocompleteFlags() complete.Flags {
+	return mergeAutocompleteFlags(c.Meta.AutocompleteFlags(FlagSetClient),
+		complete.Flags{
+			"-json":    complete.PredictNothing,
+			"-t":       complete.PredictAnything,
+			"-verbose": complete.PredictNothing,
+		})
+}
+
+func (c *DeploymentListCommand) AutocompleteArgs() complete.Predictor {
+	return complete.PredictNothing
+}
+
 func (c *DeploymentListCommand) Synopsis() string {
 	return "List all deployments"
 }
+
+func (c *DeploymentListCommand) Name() string { return "deployment list" }
 
 func (c *DeploymentListCommand) Run(args []string) int {
 	var json, verbose bool
 	var tmpl string
 
-	flags := c.Meta.FlagSet("deployment list", FlagSetClient)
+	flags := c.Meta.FlagSet(c.Name(), FlagSetClient)
 	flags.Usage = func() { c.Ui.Output(c.Help()) }
 	flags.BoolVar(&verbose, "verbose", false, "")
 	flags.BoolVar(&json, "json", false, "")
@@ -56,7 +72,8 @@ func (c *DeploymentListCommand) Run(args []string) int {
 	// Check that we got no arguments
 	args = flags.Args()
 	if l := len(args); l != 0 {
-		c.Ui.Error(c.Help())
+		c.Ui.Error("This command takes no arguments")
+		c.Ui.Error(commandErrorText(c))
 		return 1
 	}
 
