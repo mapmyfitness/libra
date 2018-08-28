@@ -115,7 +115,7 @@ func TestPrometheusBackend_GetValue_EmptyMetricName(t *testing.T) {
 	}
 }
 
-func TestPrometheusBackend_GetValue_StringMetric(t *testing.T) {
+func TestPrometheusBackend_GetValue_RangeVector(t *testing.T) {
 	name := "test"
 	kind := "prometheus"
 	host := "localhost"
@@ -146,13 +146,44 @@ func TestPrometheusBackend_GetValue_StringMetric(t *testing.T) {
 	_, err = b.GetValue(structs.Rule{
 		MetricName: "test",
 	})
-	if err.Error() == "metric test is not a vector" {
+
+	fmt.Println(err)
+	if err.Error() != "metric 'test' is not an instant vector" {
+		t.Fail()
+	}
+}
+
+func TestPrometheusBackend_GetValue_NoSamples(t *testing.T) {
+	name := "test"
+	kind := "prometheus"
+	host := "localhost"
+	config := backend.PrometheusConfig{
+		Name: name,
+		Kind: kind,
+		Host: host,
+	}
+
+	qa := &mockQueryApi{
+		query: func(ctx context.Context, query string, ts time.Time) (model.Value, error) {
+			return model.Vector{}, nil
+		},
+	}
+
+	b, err := backend.NewPrometheusBackend(name, config, qa)
+	if err != nil {
+		t.Fail()
+	}
+
+	_, err = b.GetValue(structs.Rule{
+		MetricName: "test",
+	})
+	if err.Error() != "metric 'test' has no samples" {
 		t.Fail()
 	}
 }
 
 
-func TestPrometheusBackend_GetValue_RangeVector(t *testing.T) {
+func TestPrometheusBackend_GetValue_StringMetric(t *testing.T) {
 	name := "test"
 	kind := "prometheus"
 	host := "localhost"
@@ -178,7 +209,7 @@ func TestPrometheusBackend_GetValue_RangeVector(t *testing.T) {
 	_, err = b.GetValue(structs.Rule{
 		MetricName: "test",
 	})
-	if err.Error() == "metric test is not a vector" {
+	if err.Error() != "metric 'test' is not a vector" {
 		t.Fail()
 	}
 }

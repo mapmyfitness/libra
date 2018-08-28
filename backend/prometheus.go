@@ -71,6 +71,10 @@ func (b *PrometheusBackend) GetValue(rule structs.Rule) (float64, error) {
 		return 0.0, fmt.Errorf("metric '%s' is not an instant vector", metricName)
 	}
 
+	if s.Len() == 0 {
+		return 0.0, fmt.Errorf("metric '%s' has no samples", metricName)
+	}
+
 	return float64([]*model.Sample(s)[0].Value), nil
 }
 
