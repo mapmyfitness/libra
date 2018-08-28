@@ -2,6 +2,7 @@ package config
 
 import (
 	"bytes"
+	"fmt"
 	"io/ioutil"
 	"os"
 	"path/filepath"
@@ -33,8 +34,7 @@ func NewConfig(path string) (*RootConfig, error) {
 	})
 
 	if err != nil {
-		log.Errorf("Failed to detect file: %s", err)
-		return nil, err
+		return nil, fmt.Errorf("Failed to detect file: %s", err)
 	}
 
 	var configBlob bytes.Buffer
@@ -44,8 +44,7 @@ func NewConfig(path string) (*RootConfig, error) {
 	for _, file := range fileList {
 		config, err := ioutil.ReadFile(file)
 		if err != nil {
-			log.Errorf("Failed to read file (%s): %s", file, err)
-			return nil, err
+			return nil, fmt.Errorf("Failed to read file (%s): %s", file, err)
 		}
 		configBlob.Write(config)
 	}
@@ -53,8 +52,7 @@ func NewConfig(path string) (*RootConfig, error) {
 	var out RootConfig
 	err = hcl.Decode(&out, configBlob.String())
 	if err != nil {
-		log.Errorf("HCL Error: %s", err)
-		return nil, err
+		return nil, fmt.Errorf("HCL Error: %s", err)
 	}
 
 	for jobName, jobConfig := range out.Jobs {
