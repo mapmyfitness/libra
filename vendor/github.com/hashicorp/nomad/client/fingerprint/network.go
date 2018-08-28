@@ -5,7 +5,8 @@ import (
 	"log"
 	"net"
 
-	"github.com/hashicorp/nomad/client/config"
+	sockaddr "github.com/hashicorp/go-sockaddr"
+	cstructs "github.com/hashicorp/nomad/client/structs"
 	"github.com/hashicorp/nomad/nomad/structs"
 )
 
@@ -13,6 +14,12 @@ const (
 	// defaultNetworkSpeed is the speed set if the network link speed could not
 	// be detected.
 	defaultNetworkSpeed = 1000
+
+	// networkDisallowLinkLocalOption/Default are used to allow the operator to
+	// decide how the fingerprinter handles an interface that only contains link
+	// local addresses.
+	networkDisallowLinkLocalOption  = "fingerprint.network.disallow_link_local"
+	networkDisallowLinkLocalDefault = false
 )
 
 // NetworkFingerprint is used to fingerprint the Network capabilities of a node
@@ -54,19 +61,17 @@ func NewNetworkFingerprint(logger *log.Logger) Fingerprint {
 	return f
 }
 
-func (f *NetworkFingerprint) Fingerprint(cfg *config.Config, node *structs.Node) (bool, error) {
-	if node.Resources == nil {
-		node.Resources = &structs.Resources{}
-	}
+func (f *NetworkFingerprint) Fingerprint(req *cstructs.FingerprintRequest, resp *cstructs.FingerprintResponse) error {
+	cfg := req.Config
 
 	// Find the named interface
 	intf, err := f.findInterface(cfg.NetworkInterface)
 	switch {
 	case err != nil:
-		return false, fmt.Errorf("Error while detecting network interface during fingerprinting: %v", err)
+		return fmt.Errorf("Error while detecting network interface during fingerprinting: %v", err)
 	case intf == nil:
 		// No interface could be found
-		return false, nil
+		return nil
 	}
 
 	// Record the throughput of the interface
@@ -84,34 +89,39 @@ func (f *NetworkFingerprint) Fingerprint(cfg *config.Config, node *structs.Node)
 	}
 
 	// Create the network resources from the interface
-	nwResources, err := f.createNetworkResources(mbits, intf)
+	disallowLinkLocal := cfg.ReadBoolDefault(networkDisallowLinkLocalOption, networkDisallowLinkLocalDefault)
+	nwResources, err := f.createNetworkResources(mbits, intf, disallowLinkLocal)
 	if err != nil {
-		return false, err
+		return err
 	}
 
-	// Add the network resources to the node
-	node.Resources.Networks = nwResources
+	resp.Resources = &structs.Resources{
+		Networks: nwResources,
+	}
 	for _, nwResource := range nwResources {
 		f.logger.Printf("[DEBUG] fingerprint.network: Detected interface %v with IP: %v", intf.Name, nwResource.IP)
 	}
 
 	// Deprecated, setting the first IP as unique IP for the node
 	if len(nwResources) > 0 {
-		node.Attributes["unique.network.ip-address"] = nwResources[0].IP
+		resp.AddAttribute("unique.network.ip-address", nwResources[0].IP)
 	}
+	resp.Detected = true
 
-	// return true, because we have a network connection
-	return true, nil
+	return nil
 }
 
 // createNetworkResources creates network resources for every IP
-func (f *NetworkFingerprint) createNetworkResources(throughput int, intf *net.Interface) ([]*structs.NetworkResource, error) {
+func (f *NetworkFingerprint) createNetworkResources(throughput int, intf *net.Interface, disallowLinkLocal bool) ([]*structs.NetworkResource, error) {
 	// Find the interface with the name
 	addrs, err := f.interfaceDetector.Addrs(intf)
 	if err != nil {
 		return nil, err
 	}
+
 	nwResources := make([]*structs.NetworkResource, 0)
+	linkLocals := make([]*structs.NetworkResource, 0)
+
 	for _, addr := range addrs {
 		// Create a new network resource
 		newNetwork := &structs.NetworkResource{
@@ -128,10 +138,6 @@ func (f *NetworkFingerprint) createNetworkResources(throughput int, intf *net.In
 			ip = v.IP
 		}
 
-		// If the ip is link-local then we ignore it
-		if ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() {
-			continue
-		}
 		newNetwork.IP = ip.String()
 		if ip.To4() != nil {
 			newNetwork.CIDR = newNetwork.IP + "/32"
@@ -139,52 +145,47 @@ func (f *NetworkFingerprint) createNetworkResources(throughput int, intf *net.In
 			newNetwork.CIDR = newNetwork.IP + "/128"
 		}
 
+		// If the ip is link-local then we ignore it unless the user allows it
+		// and we detect nothing else
+		if ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() {
+			linkLocals = append(linkLocals, newNetwork)
+			continue
+		}
+
 		nwResources = append(nwResources, newNetwork)
 	}
+
+	if len(nwResources) == 0 && len(linkLocals) != 0 {
+		if disallowLinkLocal {
+			f.logger.Printf("[DEBUG] fingerprint.network: ignoring detected link-local address on interface %v", intf.Name)
+			return nwResources, nil
+		}
+
+		return linkLocals, nil
+	}
+
 	return nwResources, nil
 }
 
-// Checks if the device is marked UP by the operator
-func (f *NetworkFingerprint) isDeviceEnabled(intf *net.Interface) bool {
-	return intf.Flags&net.FlagUp != 0
-}
-
-// Checks if the device has any IP address configured
-func (f *NetworkFingerprint) deviceHasIpAddress(intf *net.Interface) bool {
-	addrs, err := f.interfaceDetector.Addrs(intf)
-	return err == nil && len(addrs) != 0
-}
-
-func (n *NetworkFingerprint) isDeviceLoopBackOrPointToPoint(intf *net.Interface) bool {
-	return intf.Flags&(net.FlagLoopback|net.FlagPointToPoint) != 0
-}
-
-// Returns the interface with the name passed by user
-// If the name is blank then it iterates through all the devices
-// and finds one which is routable and marked as UP
-// It excludes PPP and lo devices unless they are specifically asked
+// Returns the interface with the name passed by user. If the name is blank, we
+// use the interface attached to the default route.
 func (f *NetworkFingerprint) findInterface(deviceName string) (*net.Interface, error) {
-	var interfaces []net.Interface
-	var err error
-
-	if deviceName != "" {
-		return f.interfaceDetector.InterfaceByName(deviceName)
-	}
-
-	var intfs []net.Interface
-
-	if intfs, err = f.interfaceDetector.Interfaces(); err != nil {
-		return nil, err
-	}
-
-	for _, intf := range intfs {
-		if f.isDeviceEnabled(&intf) && !f.isDeviceLoopBackOrPointToPoint(&intf) && f.deviceHasIpAddress(&intf) {
-			interfaces = append(interfaces, intf)
+	// If we aren't given a device, look it up by using the interface with the default route
+	if deviceName == "" {
+		ri, err := sockaddr.NewRouteInfo()
+		if err != nil {
+			return nil, err
 		}
+
+		defaultIfName, err := ri.GetDefaultInterfaceName()
+		if err != nil {
+			return nil, err
+		}
+		if defaultIfName == "" {
+			return nil, fmt.Errorf("no network_interface given and failed to determine interface attached to default route")
+		}
+		deviceName = defaultIfName
 	}
 
-	if len(interfaces) == 0 {
-		return nil, nil
-	}
-	return &interfaces[0], nil
+	return f.interfaceDetector.InterfaceByName(deviceName)
 }

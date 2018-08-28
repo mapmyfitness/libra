@@ -62,7 +62,7 @@ $ curl \
     "Output": "",
     "ServiceID": "",
     "ServiceName": "",
-    "ServiceTags": null
+    "ServiceTags": []
   },
   {
     "ID": "40e4a748-2192-161a-0510-9bf59fe950b5",
@@ -174,7 +174,7 @@ The table below shows this endpoint's support for
   `?near=_agent` will use the agent's node for the sort. This is specified as
   part of the URL as a query parameter.
 
-- `tag` `(string: "")` - Specifies the list of tags to filter the list. This is
+- `tag` `(string: "")` - Specifies the tag to filter the list. This is
   specifies as part of the URL as a query parameter.
 
 - `node-meta` `(string: "")` - Specifies a desired node metadata key/value pair
@@ -216,6 +216,9 @@ $ curl \
       "Service": "redis",
       "Tags": ["primary"],
       "Address": "10.1.10.12",
+      "Meta": {
+        "redis_version": "4.0"
+      },
       "Port": 8000
     },
     "Checks": [
@@ -239,12 +242,27 @@ $ curl \
         "Output": "",
         "ServiceID": "",
         "ServiceName": "",
-		"ServiceTags": null 
+        "ServiceTags": []
       }
     ]
   }
 ]
 ```
+
+## List Nodes for Connect-capable Service
+
+This endpoint returns the nodes providing a
+[Connect-capable](/docs/connect/index.html) service in a given datacenter.
+This will include both proxies and native integrations. A service may
+register both Connect-capable and incapable services at the same time,
+so this endpoint may be used to filter only the Connect-capable endpoints.
+
+| Method | Path                         | Produces                   |
+| ------ | ---------------------------- | -------------------------- |
+| `GET`  | `/health/connect/:service`   | `application/json`         |
+
+Parameters and response format are the same as
+[`/health/service/:service`](/api/health.html#list-nodes-for-service).
 
 ## List Checks in State
 
@@ -265,7 +283,7 @@ The table below shows this endpoint's support for
 
 ### Parameters
 
-- `state` `(string: <required>)` - Specifies the state to query. Spported states
+- `state` `(string: <required>)` - Specifies the state to query. Supported states
   are `any`, `passing`, `warning`, or `critical`. The `any` state is a wildcard
   that can be used to return all checks.
 
@@ -303,7 +321,7 @@ $ curl \
     "Output": "",
     "ServiceID": "",
     "ServiceName": "",
-	"ServiceTags": null
+    "ServiceTags": []
   },
   {
     "Node": "foobar",
@@ -314,7 +332,7 @@ $ curl \
     "Output": "",
     "ServiceID": "redis",
     "ServiceName": "redis",
-	"ServiceTags": ["primary"]
+	  "ServiceTags": ["primary"]
   }
 ]
 ```

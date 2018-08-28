@@ -2,9 +2,12 @@ package command
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/hashicorp/nomad/api"
+	"github.com/hashicorp/nomad/api/contexts"
+	"github.com/posener/complete"
 )
 
 type DeploymentStatusCommand struct {
@@ -15,8 +18,8 @@ func (c *DeploymentStatusCommand) Help() string {
 	helpText := `
 Usage: nomad deployment status [options] <deployment id>
 
-Status is used to display the status of a deployment. The status will display
-the number of desired changes as well as the currently applied changes.
+  Status is used to display the status of a deployment. The status will display
+  the number of desired changes as well as the currently applied changes.
 
 General Options:
 
@@ -40,11 +43,37 @@ func (c *DeploymentStatusCommand) Synopsis() string {
 	return "Display the status of a deployment"
 }
 
+func (c *DeploymentStatusCommand) AutocompleteFlags() complete.Flags {
+	return mergeAutocompleteFlags(c.Meta.AutocompleteFlags(FlagSetClient),
+		complete.Flags{
+			"-verbose": complete.PredictNothing,
+			"-json":    complete.PredictNothing,
+			"-t":       complete.PredictAnything,
+		})
+}
+
+func (c *DeploymentStatusCommand) AutocompleteArgs() complete.Predictor {
+	return complete.PredictFunc(func(a complete.Args) []string {
+		client, err := c.Meta.Client()
+		if err != nil {
+			return nil
+		}
+
+		resp, _, err := client.Search().PrefixSearch(a.Last, contexts.Deployments, nil)
+		if err != nil {
+			return []string{}
+		}
+		return resp.Matches[contexts.Deployments]
+	})
+}
+
+func (c *DeploymentStatusCommand) Name() string { return "deployment status" }
+
 func (c *DeploymentStatusCommand) Run(args []string) int {
 	var json, verbose bool
 	var tmpl string
 
-	flags := c.Meta.FlagSet("deployment status", FlagSetClient)
+	flags := c.Meta.FlagSet(c.Name(), FlagSetClient)
 	flags.Usage = func() { c.Ui.Output(c.Help()) }
 	flags.BoolVar(&verbose, "verbose", false, "")
 	flags.BoolVar(&json, "json", false, "")
@@ -54,10 +83,11 @@ func (c *DeploymentStatusCommand) Run(args []string) int {
 		return 1
 	}
 
-	// Check that we got no arguments
+	// Check that we got exactly one argument
 	args = flags.Args()
 	if l := len(args); l != 1 {
-		c.Ui.Error(c.Help())
+		c.Ui.Error("This command takes one argument: <deployment id>")
+		c.Ui.Error(commandErrorText(c))
 		return 1
 	}
 
@@ -142,6 +172,9 @@ func getDeployment(client *api.Deployments, dID string) (match *api.Deployment, 
 }
 
 func formatDeployment(d *api.Deployment, uuidLength int) string {
+	if d == nil {
+		return "No deployment found"
+	}
 	// Format the high-level elements
 	high := []string{
 		fmt.Sprintf("ID|%s", limit(d.ID, uuidLength)),
@@ -162,15 +195,23 @@ func formatDeployment(d *api.Deployment, uuidLength int) string {
 
 func formatDeploymentGroups(d *api.Deployment, uuidLength int) string {
 	// Detect if we need to add these columns
-	canaries, autorevert := false, false
-	for _, state := range d.TaskGroups {
+	var canaries, autorevert, progressDeadline bool
+	tgNames := make([]string, 0, len(d.TaskGroups))
+	for name, state := range d.TaskGroups {
+		tgNames = append(tgNames, name)
 		if state.AutoRevert {
 			autorevert = true
 		}
 		if state.DesiredCanaries > 0 {
 			canaries = true
 		}
+		if state.ProgressDeadline != 0 {
+			progressDeadline = true
+		}
 	}
+
+	// Sort the task group names to get a reliable ordering
+	sort.Strings(tgNames)
 
 	// Build the row string
 	rowString := "Task Group|"
@@ -185,11 +226,15 @@ func formatDeploymentGroups(d *api.Deployment, uuidLength int) string {
 		rowString += "Canaries|"
 	}
 	rowString += "Placed|Healthy|Unhealthy"
+	if progressDeadline {
+		rowString += "|Progress Deadline"
+	}
 
 	rows := make([]string, len(d.TaskGroups)+1)
 	rows[0] = rowString
 	i := 1
-	for tg, state := range d.TaskGroups {
+	for _, tg := range tgNames {
+		state := d.TaskGroups[tg]
 		row := fmt.Sprintf("%s|", tg)
 		if autorevert {
 			row += fmt.Sprintf("%v|", state.AutoRevert)
@@ -206,6 +251,13 @@ func formatDeploymentGroups(d *api.Deployment, uuidLength int) string {
 			row += fmt.Sprintf("%d|", state.DesiredCanaries)
 		}
 		row += fmt.Sprintf("%d|%d|%d", state.PlacedAllocs, state.HealthyAllocs, state.UnhealthyAllocs)
+		if progressDeadline {
+			if state.RequireProgressBy.IsZero() {
+				row += fmt.Sprintf("|%v", "N/A")
+			} else {
+				row += fmt.Sprintf("|%v", formatTime(state.RequireProgressBy))
+			}
+		}
 		rows[i] = row
 		i++
 	}

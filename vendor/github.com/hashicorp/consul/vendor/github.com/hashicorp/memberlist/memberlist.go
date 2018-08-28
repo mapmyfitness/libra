@@ -15,6 +15,7 @@ multiple routes.
 package memberlist
 
 import (
+	"container/list"
 	"fmt"
 	"log"
 	"net"
@@ -22,9 +23,10 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
-	"github.com/hashicorp/go-multierror"
+	multierror "github.com/hashicorp/go-multierror"
 	sockaddr "github.com/hashicorp/go-sockaddr"
 	"github.com/miekg/dns"
 )
@@ -33,15 +35,23 @@ type Memberlist struct {
 	sequenceNum uint32 // Local sequence number
 	incarnation uint32 // Local incarnation number
 	numNodes    uint32 // Number of known nodes (estimate)
+	pushPullReq uint32 // Number of push/pull requests
 
 	config         *Config
-	shutdown       bool
+	shutdown       int32 // Used as an atomic boolean value
 	shutdownCh     chan struct{}
-	leave          bool
+	leave          int32 // Used as an atomic boolean value
 	leaveBroadcast chan struct{}
 
+	shutdownLock sync.Mutex // Serializes calls to Shutdown
+	leaveLock    sync.Mutex // Serializes calls to Leave
+
 	transport Transport
-	handoff   chan msgHandoff
+
+	handoffCh            chan struct{}
+	highPriorityMsgQueue *list.List
+	lowPriorityMsgQueue  *list.List
+	msgQueueLock         sync.Mutex
 
 	nodeLock   sync.RWMutex
 	nodes      []*nodeState          // Known nodes
@@ -116,19 +126,19 @@ func newMemberlist(conf *Config) (*Memberlist, error) {
 
 		// See comment below for details about the retry in here.
 		makeNetRetry := func(limit int) (*NetTransport, error) {
+			var err error
 			for try := 0; try < limit; try++ {
-				nt, err := NewNetTransport(nc)
-				if err == nil {
+				var nt *NetTransport
+				if nt, err = NewNetTransport(nc); err == nil {
 					return nt, nil
 				}
-
 				if strings.Contains(err.Error(), "address already in use") {
-					logger.Printf("[DEBUG] Got bind error: %v", err)
+					logger.Printf("[DEBUG] memberlist: Got bind error: %v", err)
 					continue
 				}
 			}
 
-			return nil, fmt.Errorf("ran out of tries to obtain an address")
+			return nil, fmt.Errorf("failed to obtain an address: %v", err)
 		}
 
 		// The dynamic bind port operation is inherently racy because
@@ -150,23 +160,25 @@ func newMemberlist(conf *Config) (*Memberlist, error) {
 			port := nt.GetAutoBindPort()
 			conf.BindPort = port
 			conf.AdvertisePort = port
-			logger.Printf("[DEBUG] Using dynamic bind port %d", port)
+			logger.Printf("[DEBUG] memberlist: Using dynamic bind port %d", port)
 		}
 		transport = nt
 	}
 
 	m := &Memberlist{
-		config:         conf,
-		shutdownCh:     make(chan struct{}),
-		leaveBroadcast: make(chan struct{}, 1),
-		transport:      transport,
-		handoff:        make(chan msgHandoff, conf.HandoffQueueDepth),
-		nodeMap:        make(map[string]*nodeState),
-		nodeTimers:     make(map[string]*suspicion),
-		awareness:      newAwareness(conf.AwarenessMaxMultiplier),
-		ackHandlers:    make(map[uint32]*ackHandler),
-		broadcasts:     &TransmitLimitedQueue{RetransmitMult: conf.RetransmitMult},
-		logger:         logger,
+		config:               conf,
+		shutdownCh:           make(chan struct{}),
+		leaveBroadcast:       make(chan struct{}, 1),
+		transport:            transport,
+		handoffCh:            make(chan struct{}, 1),
+		highPriorityMsgQueue: list.New(),
+		lowPriorityMsgQueue:  list.New(),
+		nodeMap:              make(map[string]*nodeState),
+		nodeTimers:           make(map[string]*suspicion),
+		awareness:            newAwareness(conf.AwarenessMaxMultiplier),
+		ackHandlers:          make(map[uint32]*ackHandler),
+		broadcasts:           &TransmitLimitedQueue{RetransmitMult: conf.RetransmitMult},
+		logger:               logger,
 	}
 	m.broadcasts.NumNodes = func() int {
 		return m.estNumNodes()
@@ -304,23 +316,17 @@ func (m *Memberlist) tcpLookupIP(host string, defaultPort uint16) ([]ipPort, err
 // resolveAddr is used to resolve the address into an address,
 // port, and error. If no port is given, use the default
 func (m *Memberlist) resolveAddr(hostStr string) ([]ipPort, error) {
-	// Normalize the incoming string to host:port so we can apply Go's
-	// parser to it.
-	port := uint16(0)
-	if !hasPort(hostStr) {
-		hostStr += ":" + strconv.Itoa(m.config.BindPort)
-	}
+	// This captures the supplied port, or the default one.
+	hostStr = ensurePort(hostStr, m.config.BindPort)
 	host, sport, err := net.SplitHostPort(hostStr)
 	if err != nil {
 		return nil, err
 	}
-
-	// This will capture the supplied port, or the default one added above.
 	lport, err := strconv.ParseUint(sport, 10, 16)
 	if err != nil {
 		return nil, err
 	}
-	port = uint16(lport)
+	port := uint16(lport)
 
 	// If it looks like an IP address we are done. The SplitHostPort() above
 	// will make sure the host part is in good shape for parsing, even for
@@ -554,18 +560,17 @@ func (m *Memberlist) NumMembers() (alive int) {
 // This method is safe to call multiple times, but must not be called
 // after the cluster is already shut down.
 func (m *Memberlist) Leave(timeout time.Duration) error {
-	m.nodeLock.Lock()
-	// We can't defer m.nodeLock.Unlock() because m.deadNode will also try to
-	// acquire a lock so we need to Unlock before that.
+	m.leaveLock.Lock()
+	defer m.leaveLock.Unlock()
 
-	if m.shutdown {
-		m.nodeLock.Unlock()
+	if m.hasShutdown() {
 		panic("leave after shutdown")
 	}
 
-	if !m.leave {
-		m.leave = true
+	if !m.hasLeft() {
+		atomic.StoreInt32(&m.leave, 1)
 
+		m.nodeLock.Lock()
 		state, ok := m.nodeMap[m.config.Name]
 		m.nodeLock.Unlock()
 		if !ok {
@@ -591,8 +596,6 @@ func (m *Memberlist) Leave(timeout time.Duration) error {
 				return fmt.Errorf("timeout waiting for leave broadcast")
 			}
 		}
-	} else {
-		m.nodeLock.Unlock()
 	}
 
 	return nil
@@ -634,21 +637,31 @@ func (m *Memberlist) ProtocolVersion() uint8 {
 //
 // This method is safe to call multiple times.
 func (m *Memberlist) Shutdown() error {
-	m.nodeLock.Lock()
-	defer m.nodeLock.Unlock()
+	m.shutdownLock.Lock()
+	defer m.shutdownLock.Unlock()
 
-	if m.shutdown {
+	if m.hasShutdown() {
 		return nil
 	}
 
 	// Shut down the transport first, which should block until it's
 	// completely torn down. If we kill the memberlist-side handlers
 	// those I/O handlers might get stuck.
-	m.transport.Shutdown()
+	if err := m.transport.Shutdown(); err != nil {
+		m.logger.Printf("[ERR] Failed to shutdown transport: %v", err)
+	}
 
 	// Now tear down everything else.
-	m.shutdown = true
+	atomic.StoreInt32(&m.shutdown, 1)
 	close(m.shutdownCh)
 	m.deschedule()
 	return nil
+}
+
+func (m *Memberlist) hasShutdown() bool {
+	return atomic.LoadInt32(&m.shutdown) == 1
+}
+
+func (m *Memberlist) hasLeft() bool {
+	return atomic.LoadInt32(&m.leave) == 1
 }

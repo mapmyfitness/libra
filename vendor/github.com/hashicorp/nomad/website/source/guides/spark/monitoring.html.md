@@ -83,25 +83,25 @@ job "spark-history-server" {
 }
 ```
 
-The job file above can also be found [here](https://github.com/hashicorp/nomad/blob/f-terraform-config/terraform/examples/spark/spark-history-server.nomad).
+The job file above can also be found [here](https://github.com/hashicorp/nomad/blob/master/terraform/examples/spark/spark-history-server-hdfs.nomad).
 
 To run the history server, first [deploy HDFS](/guides/spark/hdfs.html) and then 
 create a directory in HDFS to store events:
 
 ```shell
-$ hdfs dfs -mkdir /spark-events
+$ hdfs dfs -fs hdfs://hdfs.service.consul:8020 -mkdir /spark-events
 ```
 
 You can then deploy the history server with:
 
 ```shell
-$ nomad run spark-history-server-hdfs.nomad
+$ nomad job run spark-history-server-hdfs.nomad
 ```
 
 You can get the private IP for the history server with a Consul DNS lookup:
 
 ```shell
-$ dig.spark-history.service.consul
+$ dig spark-history.service.consul
 ```
 
 Find the public IP that corresponds to the private IP returned by the `dig` 
@@ -127,9 +127,9 @@ $ spark-submit \
 
 Nomad clients collect the `stderr` and `stdout` of running tasks. The CLI or the
  HTTP API can be used to inspect logs, as documented in 
-[Accessing Logs](https://www.nomadproject.io/docs/operating-a-job/accessing-logs.html).
+[Accessing Logs](/guides/operating-a-job/accessing-logs.html).
 In cluster mode, the `stderr` and `stdout` of the `driver` application can be 
-accessed in the same way. The [Log Shipper Pattern](https://www.nomadproject.io/docs/operating-a-job/accessing-logs.html#log-shipper-pattern) uses sidecar tasks to forward logs to a central location. This
+accessed in the same way. The [Log Shipper Pattern](/guides/operating-a-job/accessing-logs.html#log-shipper-pattern) uses sidecar tasks to forward logs to a central location. This
 can be done using a job template as follows:
 
 ```hcl

@@ -8,6 +8,7 @@ import (
 	"github.com/hashicorp/nomad/nomad/mock"
 	"github.com/hashicorp/nomad/nomad/structs"
 	"github.com/hashicorp/nomad/testutil"
+	"github.com/stretchr/testify/require"
 )
 
 var (
@@ -387,24 +388,41 @@ func TestEvalBroker_Serialize_DuplicateJobID(t *testing.T) {
 	b := testBroker(t, 0)
 	b.SetEnabled(true)
 
+	ns1 := "namespace-one"
+	ns2 := "namespace-two"
 	eval := mock.Eval()
+	eval.Namespace = ns1
 	b.Enqueue(eval)
 
 	eval2 := mock.Eval()
 	eval2.JobID = eval.JobID
+	eval2.Namespace = ns1
 	eval2.CreateIndex = eval.CreateIndex + 1
 	b.Enqueue(eval2)
 
 	eval3 := mock.Eval()
 	eval3.JobID = eval.JobID
+	eval3.Namespace = ns1
 	eval3.CreateIndex = eval.CreateIndex + 2
 	b.Enqueue(eval3)
 
+	eval4 := mock.Eval()
+	eval4.JobID = eval.JobID
+	eval4.Namespace = ns2
+	eval4.CreateIndex = eval.CreateIndex + 3
+	b.Enqueue(eval4)
+
+	eval5 := mock.Eval()
+	eval5.JobID = eval.JobID
+	eval5.Namespace = ns2
+	eval5.CreateIndex = eval.CreateIndex + 4
+	b.Enqueue(eval5)
+
 	stats := b.Stats()
-	if stats.TotalReady != 1 {
+	if stats.TotalReady != 2 {
 		t.Fatalf("bad: %#v", stats)
 	}
-	if stats.TotalBlocked != 2 {
+	if stats.TotalBlocked != 3 {
 		t.Fatalf("bad: %#v", stats)
 	}
 
@@ -419,13 +437,13 @@ func TestEvalBroker_Serialize_DuplicateJobID(t *testing.T) {
 
 	// Check the stats
 	stats = b.Stats()
-	if stats.TotalReady != 0 {
+	if stats.TotalReady != 1 {
 		t.Fatalf("bad: %#v", stats)
 	}
 	if stats.TotalUnacked != 1 {
 		t.Fatalf("bad: %#v", stats)
 	}
-	if stats.TotalBlocked != 2 {
+	if stats.TotalBlocked != 3 {
 		t.Fatalf("bad: %#v", stats)
 	}
 
@@ -437,13 +455,13 @@ func TestEvalBroker_Serialize_DuplicateJobID(t *testing.T) {
 
 	// Check the stats
 	stats = b.Stats()
-	if stats.TotalReady != 1 {
+	if stats.TotalReady != 2 {
 		t.Fatalf("bad: %#v", stats)
 	}
 	if stats.TotalUnacked != 0 {
 		t.Fatalf("bad: %#v", stats)
 	}
-	if stats.TotalBlocked != 1 {
+	if stats.TotalBlocked != 2 {
 		t.Fatalf("bad: %#v", stats)
 	}
 
@@ -458,6 +476,84 @@ func TestEvalBroker_Serialize_DuplicateJobID(t *testing.T) {
 
 	// Check the stats
 	stats = b.Stats()
+	if stats.TotalReady != 1 {
+		t.Fatalf("bad: %#v", stats)
+	}
+	if stats.TotalUnacked != 1 {
+		t.Fatalf("bad: %#v", stats)
+	}
+	if stats.TotalBlocked != 2 {
+		t.Fatalf("bad: %#v", stats)
+	}
+
+	// Ack out
+	err = b.Ack(eval2.ID, token)
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+
+	// Check the stats
+	stats = b.Stats()
+	if stats.TotalReady != 2 {
+		t.Fatalf("bad: %#v", stats)
+	}
+	if stats.TotalUnacked != 0 {
+		t.Fatalf("bad: %#v", stats)
+	}
+	if stats.TotalBlocked != 1 {
+		t.Fatalf("bad: %#v", stats)
+	}
+
+	// Dequeue should work
+	out, token, err = b.Dequeue(defaultSched, time.Second)
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	if out != eval3 {
+		t.Fatalf("bad : %#v", out)
+	}
+
+	// Check the stats
+	stats = b.Stats()
+	if stats.TotalReady != 1 {
+		t.Fatalf("bad: %#v", stats)
+	}
+	if stats.TotalUnacked != 1 {
+		t.Fatalf("bad: %#v", stats)
+	}
+	if stats.TotalBlocked != 1 {
+		t.Fatalf("bad: %#v", stats)
+	}
+
+	// Ack out
+	err = b.Ack(eval3.ID, token)
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+
+	// Check the stats
+	stats = b.Stats()
+	if stats.TotalReady != 1 {
+		t.Fatalf("bad: %#v", stats)
+	}
+	if stats.TotalUnacked != 0 {
+		t.Fatalf("bad: %#v", stats)
+	}
+	if stats.TotalBlocked != 1 {
+		t.Fatalf("bad: %#v", stats)
+	}
+
+	// Dequeue should work
+	out, token, err = b.Dequeue(defaultSched, time.Second)
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	if out != eval4 {
+		t.Fatalf("bad : %#v", out)
+	}
+
+	// Check the stats
+	stats = b.Stats()
 	if stats.TotalReady != 0 {
 		t.Fatalf("bad: %#v", stats)
 	}
@@ -469,7 +565,7 @@ func TestEvalBroker_Serialize_DuplicateJobID(t *testing.T) {
 	}
 
 	// Ack out
-	err = b.Ack(eval2.ID, token)
+	err = b.Ack(eval4.ID, token)
 	if err != nil {
 		t.Fatalf("err: %v", err)
 	}
@@ -491,7 +587,7 @@ func TestEvalBroker_Serialize_DuplicateJobID(t *testing.T) {
 	if err != nil {
 		t.Fatalf("err: %v", err)
 	}
-	if out != eval3 {
+	if out != eval5 {
 		t.Fatalf("bad : %#v", out)
 	}
 
@@ -508,7 +604,7 @@ func TestEvalBroker_Serialize_DuplicateJobID(t *testing.T) {
 	}
 
 	// Ack out
-	err = b.Ack(eval3.ID, token)
+	err = b.Ack(eval5.ID, token)
 	if err != nil {
 		t.Fatalf("err: %v", err)
 	}
@@ -1045,6 +1141,52 @@ func TestEvalBroker_Wait(t *testing.T) {
 	}
 }
 
+// Ensure that delayed evaluations work as expected
+func TestEvalBroker_WaitUntil(t *testing.T) {
+	t.Parallel()
+	require := require.New(t)
+	b := testBroker(t, 0)
+	b.SetEnabled(true)
+
+	now := time.Now()
+	// Create a few of evals with WaitUntil set
+	eval1 := mock.Eval()
+	eval1.WaitUntil = now.Add(1 * time.Second)
+	eval1.CreateIndex = 1
+	b.Enqueue(eval1)
+
+	eval2 := mock.Eval()
+	eval2.WaitUntil = now.Add(100 * time.Millisecond)
+	// set CreateIndex to use as a tie breaker when eval2
+	// and eval3 are both in the pending evals heap
+	eval2.CreateIndex = 2
+	b.Enqueue(eval2)
+
+	eval3 := mock.Eval()
+	eval3.WaitUntil = now.Add(20 * time.Millisecond)
+	eval3.CreateIndex = 1
+	b.Enqueue(eval3)
+	require.Equal(3, b.stats.TotalWaiting)
+	// sleep enough for two evals to be ready
+	time.Sleep(200 * time.Millisecond)
+
+	// first dequeue should return eval3
+	out, _, err := b.Dequeue(defaultSched, time.Second)
+	require.Nil(err)
+	require.Equal(eval3, out)
+
+	// second dequeue should return eval2
+	out, _, err = b.Dequeue(defaultSched, time.Second)
+	require.Nil(err)
+	require.Equal(eval2, out)
+
+	// third dequeue should return eval1
+	out, _, err = b.Dequeue(defaultSched, 2*time.Second)
+	require.Nil(err)
+	require.Equal(eval1, out)
+	require.Equal(0, b.stats.TotalWaiting)
+}
+
 // Ensure that priority is taken into account when enqueueing many evaluations.
 func TestEvalBroker_EnqueueAll_Dequeue_Fair(t *testing.T) {
 	t.Parallel()
@@ -1199,4 +1341,46 @@ func TestEvalBroker_EnqueueAll_Requeue_Nack(t *testing.T) {
 	}, func(e error) {
 		t.Fatal(e)
 	})
+}
+
+func TestEvalBroker_NamespacedJobs(t *testing.T) {
+	t.Parallel()
+	b := testBroker(t, 0)
+	b.SetEnabled(true)
+
+	// Create evals with the same jobid and different namespace
+	jobId := "test-jobID"
+
+	eval1 := mock.Eval()
+	eval1.JobID = jobId
+	eval1.Namespace = "n1"
+	b.Enqueue(eval1)
+
+	// This eval should not block
+	eval2 := mock.Eval()
+	eval2.JobID = jobId
+	eval2.Namespace = "default"
+	b.Enqueue(eval2)
+
+	// This eval should block
+	eval3 := mock.Eval()
+	eval3.JobID = jobId
+	eval3.Namespace = "default"
+	b.Enqueue(eval3)
+
+	require := require.New(t)
+	out1, _, err := b.Dequeue(defaultSched, 5*time.Millisecond)
+	require.Nil(err)
+	require.Equal(eval1.ID, out1.ID)
+
+	out2, _, err := b.Dequeue(defaultSched, 5*time.Millisecond)
+	require.Nil(err)
+	require.Equal(eval2.ID, out2.ID)
+
+	out3, _, err := b.Dequeue(defaultSched, 5*time.Millisecond)
+	require.Nil(err)
+	require.Nil(out3)
+
+	require.Equal(1, len(b.blocked))
+
 }

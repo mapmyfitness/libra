@@ -1,5 +1,5 @@
 hash: 0c5bbe2013a70f1ba058216b3dd3c504494ed0a766b0d2d1eab668e8119e7b46
-updated: 2017-08-04T13:51:21.50288552-05:00
+updated: 2018-08-28T08:57:20.230108+01:00
 imports:
 - name: github.com/ant0ine/go-json-rest
   version: ce4b71cdf7ba29ef443d704bd923f5bbf281ee30
@@ -7,11 +7,11 @@ imports:
   - rest
   - rest/trie
 - name: github.com/armon/go-metrics
-  version: f036747b9d0e8590f175a5d654a2194a7d9df4b5
+  version: 3c58d8115a78a6879e5df75ae900846768d36895
 - name: github.com/armon/go-radix
-  version: 4239b77079c7b5d1243b7b4736304ce8ddb6f0f2
+  version: 1a2de0c21c94309923825da3df33a4381872c795
 - name: github.com/aws/aws-sdk-go
-  version: b33b08175d12b795daa7726c5577b39d06a2551c
+  version: b69f447375c7fa0047ebcdd8ae5d585d5aac2f71
   subpackages:
   - aws
   - aws/awserr
@@ -39,30 +39,38 @@ imports:
   - service/sts
 - name: github.com/bgentry/speakeasy
   version: 4aabc24848ce5fd31929f7d1e4ea74d3709c14cd
+- name: github.com/fatih/color
+  version: 2d684516a8861da43017284349b7e303e809ac21
 - name: github.com/go-ini/ini
-  version: 3d73f4b845efdf9989fffd4b4e562727744a34ba
+  version: 5cf292cae48347c2490ac1a58fe36735fb78df7e
 - name: github.com/gorhill/cronexpr
-  version: d520615e531a6bf3fb69406b9eba718261285ec8
+  version: 88b0669f7d75f171bd612b874e52b95c190218df
 - name: github.com/hashicorp/consul
-  version: 7ae25f6c7e3fa43462bcb15883cbf1c7c42f9258
+  version: 8e7b8bb524712f9fc0e07ffbc7b03b84b517ef96
   subpackages:
   - api
 - name: github.com/hashicorp/errwrap
-  version: 7554cd9344cec97297fa6649b055a8c98c2a1e55
+  version: 8a6fb523712970c966eefc6b39ed2c5e74880354
 - name: github.com/hashicorp/go-cleanhttp
-  version: 3573b8b52aa7b37b9358d966a898feb387f62437
+  version: d5fe4b57a186c716b0e00b8c301cbd9b4182694d
+- name: github.com/hashicorp/go-immutable-radix
+  version: 7f3cd4390caab3250a57f30efdb2a65dd7649ecf
 - name: github.com/hashicorp/go-msgpack
   version: fa3f63826f7c23912c15263591e65d54d080b458
   subpackages:
   - codec
 - name: github.com/hashicorp/go-multierror
-  version: 83588e72410abfbe4df460eeb6f30841ae47d4c4
+  version: 886a7fbe3eb1c874d46f623bfa70af45f425b3d1
 - name: github.com/hashicorp/go-rootcerts
   version: 6bb64b370b90e7ef1fa532be9e591a81c3493e00
 - name: github.com/hashicorp/go-version
-  version: 03c5bf6be031b6dd45afec16b1cf94fc8938bc77
+  version: b5a281d3160aa11950a6182bd9a9dc2cb1e02d50
+- name: github.com/hashicorp/golang-lru
+  version: 0fb14efe8c47ae851c0034ed7a448854d3d34cf3
+  subpackages:
+  - simplelru
 - name: github.com/hashicorp/hcl
-  version: 392dba7d905ed5d04a5794ba89f558b27e2ba1ca
+  version: 8cb6e5b959231cc1119e43259c4a608f9c51a241
   subpackages:
   - hcl/ast
   - hcl/parser
@@ -73,45 +81,63 @@ imports:
   - json/scanner
   - json/token
 - name: github.com/hashicorp/nomad
-  version: dd6a2ec1a80744fa3d4780d5199f94fda439b725
+  version: 78ed7c05b80ca9af7b1df2aa84140882bf7bb7fe
   subpackages:
+  - acl
   - api
+  - api/contexts
   - helper
   - helper/args
   - helper/flatmap
+  - helper/uuid
   - nomad/structs
 - name: github.com/hashicorp/raft
-  version: 37d2320db05ca622195063977ff5d4fbe0cd8ed8
+  version: 82694fb663be3ffa7769961ee9a65e4c39ebbf2c
 - name: github.com/hashicorp/serf
-  version: 6669b5d30985da6dd423ecf65f033cee400203fe
+  version: 19bbd39e421bdf3559d5025fb2c760f5ffa56233
   subpackages:
   - coordinate
 - name: github.com/jmespath/go-jmespath
-  version: bd40a432e4c76585ef6b72d3fd96fb9b6dc7b68d
+  version: c2b33e8439af944379acbdd9c3a5fe0bc44bd8a5
+- name: github.com/mattn/go-colorable
+  version: efa589957cd060542a26d2dd7832fd6a6c6c3ade
 - name: github.com/mattn/go-isatty
-  version: fc9e8d8ef48496124e79ae0df75490096eccf6fe
+  version: 6ca4dbf54d38eea1a992b3c722a76a5d1c4cb25c
 - name: github.com/mitchellh/cli
-  version: b481eac70eea3ad671b7c360a013f89bb759b252
+  version: 3d22a244be8aa6fb16ac24af0e195c08b7d973aa
 - name: github.com/mitchellh/copystructure
-  version: d23ffcb85de31694d6ccaa23ccb4a03e55c1303f
+  version: 9a1b6f44e8da0e0e374624fb0a825a231b00c537
 - name: github.com/mitchellh/go-homedir
-  version: b8bc1bf767474819792c23f32d8286a45736f1c6
+  version: ae18d6b8b3205b561c79e8e5f69bff09736185f4
 - name: github.com/mitchellh/hashstructure
   version: 2bca23e0e452137f789efbc8610126fd8b94f73b
 - name: github.com/mitchellh/mapstructure
-  version: d0303fe809921458f417bcf828397a65db30a7e4
+  version: fa473d140ef3c6adf42d6b391fe76707f1f243c8
 - name: github.com/mitchellh/reflectwalk
-  version: 8d802ff4ae93611b807597f639c19f76074df5c6
+  version: eecee6c969c02c8cc2ae48e1e269843ae8590796
+- name: github.com/posener/complete
+  version: dcda3199365ca2a5f24aea4c42aa56f6a197d117
+  subpackages:
+  - cmd
+  - cmd/install
+  - match
 - name: github.com/sirupsen/logrus
-  version: a3f95b5c423586578a4e099b11a46c2479628cac
+  version: 3e01752db0189b9157070a0e1668a620f9a85da2
 - name: github.com/ugorji/go
-  version: 5efa3251c7f7d05e5d9704a69a984ec9f1386a40
+  version: 00b869d2f4a5e27445c2d916fa106fc72c106d4c
   subpackages:
   - codec
-- name: golang.org/x/sys
-  version: 739734461d1c916b6c72a63d7efda2b27edb369f
+- name: golang.org/x/crypto
+  version: 614d502a4dac94afa3a6ce146bd1736da82514c6
   subpackages:
+  - blake2b
+  - ssh/terminal
+- name: golang.org/x/sys
+  version: d99a578cf41bfccdeaf48b0845c823a4b8b0ad5e
+  subpackages:
+  - cpu
   - unix
+  - windows
 - name: gopkg.in/robfig/cron.v2
   version: be2e0b0deed5a68ffee390b4583a13aff8321535
 testImports: []

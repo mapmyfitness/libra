@@ -18,7 +18,7 @@ is _**highly**_ discouraged as data loss is inevitable in a failure scenario.
 
 All other agents run in client mode. A client is a very lightweight
 process that registers services, runs health checks, and forwards queries to
-servers. The agent must be run on every node that is part of the cluster.
+servers. The agent must be running on every node that is part of the cluster.
 
 For more detail on bootstrapping a datacenter, see
 [this guide](/docs/guides/bootstrapping.html).
@@ -42,7 +42,6 @@ any state.
        Client Addr: 127.0.0.1 (HTTP: 8500, HTTPS: -1, DNS: 8600, RPC: 8400)
       Cluster Addr: 127.0.0.1 (LAN: 8301, WAN: 8302)
     Gossip encrypt: false, RPC-TLS: false, TLS-Incoming: false
-             Atlas: <disabled>
 
 ==> Log data will now stream in as it occurs:
 

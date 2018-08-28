@@ -2,6 +2,7 @@ package api
 
 import (
 	"sort"
+	"time"
 )
 
 // Deployments is used to query the deployments endpoints.
@@ -14,7 +15,7 @@ func (c *Client) Deployments() *Deployments {
 	return &Deployments{client: c}
 }
 
-// List is used to dump all of the evaluations.
+// List is used to dump all of the deployments.
 func (d *Deployments) List(q *QueryOptions) ([]*Deployment, *QueryMeta, error) {
 	var resp []*Deployment
 	qm, err := d.client.query("/v1/deployments", &resp, q)
@@ -29,7 +30,7 @@ func (d *Deployments) PrefixList(prefix string) ([]*Deployment, *QueryMeta, erro
 	return d.List(&QueryOptions{Prefix: prefix})
 }
 
-// Info is used to query a single evaluation by its ID.
+// Info is used to query a single deployment by its ID.
 func (d *Deployments) Info(deploymentID string, q *QueryOptions) (*Deployment, *QueryMeta, error) {
 	var resp Deployment
 	qm, err := d.client.query("/v1/deployment/"+deploymentID, &resp, q)
@@ -124,28 +125,58 @@ func (d *Deployments) SetAllocHealth(deploymentID string, healthy, unhealthy []s
 
 // Deployment is used to serialize an deployment.
 type Deployment struct {
-	ID                string
-	JobID             string
-	JobVersion        uint64
-	JobModifyIndex    uint64
-	JobCreateIndex    uint64
-	TaskGroups        map[string]*DeploymentState
-	Status            string
+	// ID is a generated UUID for the deployment
+	ID string
+
+	// Namespace is the namespace the deployment is created in
+	Namespace string
+
+	// JobID is the job the deployment is created for
+	JobID string
+
+	// JobVersion is the version of the job at which the deployment is tracking
+	JobVersion uint64
+
+	// JobModifyIndex is the ModifyIndex of the job which the deployment is
+	// tracking.
+	JobModifyIndex uint64
+
+	// JobSpecModifyIndex is the JobModifyIndex of the job which the
+	// deployment is tracking.
+	JobSpecModifyIndex uint64
+
+	// JobCreateIndex is the create index of the job which the deployment is
+	// tracking. It is needed so that if the job gets stopped and reran we can
+	// present the correct list of deployments for the job and not old ones.
+	JobCreateIndex uint64
+
+	// TaskGroups is the set of task groups effected by the deployment and their
+	// current deployment status.
+	TaskGroups map[string]*DeploymentState
+
+	// The status of the deployment
+	Status string
+
+	// StatusDescription allows a human readable description of the deployment
+	// status.
 	StatusDescription string
-	CreateIndex       uint64
-	ModifyIndex       uint64
+
+	CreateIndex uint64
+	ModifyIndex uint64
 }
 
 // DeploymentState tracks the state of a deployment for a given task group.
 type DeploymentState struct {
-	PlacedCanaries  []string
-	AutoRevert      bool
-	Promoted        bool
-	DesiredCanaries int
-	DesiredTotal    int
-	PlacedAllocs    int
-	HealthyAllocs   int
-	UnhealthyAllocs int
+	PlacedCanaries    []string
+	AutoRevert        bool
+	ProgressDeadline  time.Duration
+	RequireProgressBy time.Time
+	Promoted          bool
+	DesiredCanaries   int
+	DesiredTotal      int
+	PlacedAllocs      int
+	HealthyAllocs     int
+	UnhealthyAllocs   int
 }
 
 // DeploymentIndexSort is a wrapper to sort deployments by CreateIndex. We
