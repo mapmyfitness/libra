@@ -1,4 +1,4 @@
-FROM golang:1.8 as builder
+FROM golang:1.11 as builder
 
 # Install Glide
 ENV GLIDE_VERSION 0.12.3
