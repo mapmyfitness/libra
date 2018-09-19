@@ -1,3 +1,7 @@
+⚠️ **This repository is not under active use or maintenance by Under Armour.** ⚠️
+If you're still interested in using it, there are a few [active forks](https://github.com/underarmour/libra/network/members).
+
+
 # Libra
 Libra autoscales [Nomad](nomadproject.io) task groups so you don't have to. View the API documentation [here](https://underarmour.github.io/libra).
 
