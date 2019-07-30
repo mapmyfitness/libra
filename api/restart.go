@@ -6,8 +6,8 @@ import (
 
 	"github.com/ant0ine/go-json-rest/rest"
 	log "github.com/sirupsen/logrus"
-	"github.com/underarmour/libra/config"
-	"github.com/underarmour/libra/nomad"
+	"github.com/YotpoLtd/libra/config"
+	"github.com/YotpoLtd/libra/nomad"
 )
 
 type RestartRequest struct {

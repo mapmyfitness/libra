@@ -49,11 +49,12 @@ client {
 - `meta` `(map[string]string: nil)` - Specifies a key-value map that annotates
   with user-defined metadata.
 
-- `network_interface` `(string: "lo | lo0")` - Specifies the name of the
-  interface to force network fingerprinting on. This defaults to the loopback
-  interface. All addresses on the interface are fingerprinted except the ones
-  which are scoped local for IPv6. When allocating ports for tasks, the
-  scheduler will choose from the IPs of the fingerprinted interface.
+- `network_interface` `(string: varied)` - Specifies the name of the interface
+  to force network fingerprinting on. When run in dev mode, this defaults to the
+  loopback interface. When not in dev mode, the interface attached to the
+  default route is used. All IP addresses except those scoped local for IPV6 on
+  the chosen interface are fingerprinted. The scheduler chooses from those IP
+  addresses when allocating ports for tasks.
 
 - `network_speed` `(int: 0)` - Specifies an override for the network link speed.
   This value, if set, overrides any detected or defaulted link speed. Most
@@ -65,6 +66,9 @@ client {
   quad-core running at 2 GHz would have a total compute of 8000 (4 * 2000). Most
   clients can determine their total CPU compute automatically, and thus in most
   cases this should be left unset.
+
+- `memory_total_mb` `(int:0)` - Specifies an override for the total memory. If set,
+  this value overrides any detected memory.
 
 - `node_class` `(string: "")` - Specifies an arbitrary string used to logically
   group client nodes by user-defined class. This can be used during job
@@ -86,13 +90,19 @@ client {
   receive work. This may be specified as an IP address or DNS, with or without
   the port. If the port is omitted, the default port of `4647` is used.
 
+- `server_join` <code>([server_join][server-join]: nil)</code> - Specifies
+  how the Nomad client will connect to Nomad servers. The `start_join` field
+  is not supported on the client. The retry_join fields may directly specify
+  the server address or use go-discover syntax for auto-discovery. See the
+  documentation for more detail.
+
 - `state_dir` `(string: "[data_dir]/client")` - Specifies the directory to use
  to store client state. By default, this is - the top-level
  [data_dir](/docs/agent/configuration/index.html#data_dir) suffixed with
  "client", like `"/opt/nomad/client"`. This must be an absolute path.
 
 - `gc_interval` `(string: "1m")` - Specifies the interval at which Nomad
-  attempts to garbage collect terminal allocation directories. 
+  attempts to garbage collect terminal allocation directories.
 
 - `gc_disk_usage_threshold` `(float: 80)` - Specifies the disk usage percent which
   Nomad tries to maintain by garbage collecting terminal allocations.
@@ -268,6 +278,19 @@ see the [drivers documentation](/docs/drivers/index.html).
     }
     ```
 
+- `"fingerprint.network.disallow_link_local"` `(string: "false")` - Specifies
+  whether the network fingerprinter should ignore link-local addresses in the
+  case that no globally routable address is found. The fingerprinter will always
+  prefer globally routable addresses.
+
+    ```hcl
+    client {
+      options = {
+        "fingerprint.network.disallow_link_local" = "true"
+      }
+    }
+    ```
+
 ### `reserved` Parameters
 
 - `cpu` `(int: 0)` - Specifies the amount of CPU to reserve, in MHz.
@@ -290,7 +313,11 @@ cluster.
 ```hcl
 client {
   enabled = true
-  servers = ["1.2.3.4:4647", "5.6.7.8:4647"]
+  server_join {
+    retry_join = [ "1.1.1.1", "2.2.2.2" ]
+    retry_max = 3
+    retry_interval = "15s"
+  }
 }
 ```
 
@@ -329,3 +356,4 @@ client {
   }
 }
 ```
+[server-join]: /docs/agent/configuration/server_join.html "Server Join"

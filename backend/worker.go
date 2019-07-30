@@ -4,8 +4,8 @@ import (
 	"errors"
 
 	log "github.com/sirupsen/logrus"
-	"github.com/underarmour/libra/nomad"
-	"github.com/underarmour/libra/structs"
+	"github.com/YotpoLtd/libra/nomad"
+	"github.com/YotpoLtd/libra/structs"
 )
 
 // Work actually does the autoscaling for a rule
@@ -63,9 +63,8 @@ func Work(r *structs.Rule, nomadConf *nomad.Config, job, group string, min, max 
 			if err != nil {
 				log.Errorf("Problem scaling nomad job/group %s/%s: %s", job, group, err)
 				return err
-			} else {
-				log.Infof("Scaled %s/%s to %d successfully with evaluation ID %s", job, group, newCount, evaluation)
 			}
+			log.Infof("Scaled %s/%s to %d successfully with evaluation ID %s", job, group, newCount, evaluation)
 		default:
 			log.Errorln("Autoscaling action did not match. Doing nothing...")
 		}

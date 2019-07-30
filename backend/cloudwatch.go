@@ -10,7 +10,7 @@ import (
 	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/cloudwatch"
 	log "github.com/sirupsen/logrus"
-	"github.com/underarmour/libra/structs"
+	"github.com/YotpoLtd/libra/structs"
 )
 
 // CloudWatchConfig is the configuration for a CloudWatch backend
@@ -71,11 +71,11 @@ func (b *CloudWatchBackend) GetValue(rule structs.Rule) (float64, error) {
 	}
 	dinput := &cloudwatch.GetMetricStatisticsInput{
 		Dimensions: []*cloudwatch.Dimension{dimension},
-		EndTime:    aws.Time(time.Now()),
+		EndTime:    aws.Time(time.Now().UTC()),
 		MetricName: aws.String(metricName),
 		Namespace:  aws.String(metricNamespace),
 		Period:     aws.Int64(300),
-		StartTime:  aws.Time(time.Now().Add(-3 * time.Hour)),
+		StartTime:  aws.Time(time.Now().UTC().Add(-5 * time.Minute)),
 		Statistics: aws.StringSlice([]string{"Average"}),
 	}
 

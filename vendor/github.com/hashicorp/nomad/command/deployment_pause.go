@@ -3,6 +3,9 @@ package command
 import (
 	"fmt"
 	"strings"
+
+	"github.com/hashicorp/nomad/api/contexts"
+	"github.com/posener/complete"
 )
 
 type DeploymentPauseCommand struct {
@@ -13,8 +16,8 @@ func (c *DeploymentPauseCommand) Help() string {
 	helpText := `
 Usage: nomad deployment pause [options] <deployment id>
 
-Pause is used to pause a deployment. Pausing a deployment will pause the
-placement of new allocations as part of rolling deployment.
+  Pause is used to pause a deployment. Pausing a deployment will pause the
+  placement of new allocations as part of rolling deployment.
 
 General Options:
 
@@ -32,10 +35,34 @@ func (c *DeploymentPauseCommand) Synopsis() string {
 	return "Pause a deployment"
 }
 
+func (c *DeploymentPauseCommand) AutocompleteFlags() complete.Flags {
+	return mergeAutocompleteFlags(c.Meta.AutocompleteFlags(FlagSetClient),
+		complete.Flags{
+			"-verbose": complete.PredictNothing,
+		})
+}
+
+func (c *DeploymentPauseCommand) AutocompleteArgs() complete.Predictor {
+	return complete.PredictFunc(func(a complete.Args) []string {
+		client, err := c.Meta.Client()
+		if err != nil {
+			return nil
+		}
+
+		resp, _, err := client.Search().PrefixSearch(a.Last, contexts.Deployments, nil)
+		if err != nil {
+			return []string{}
+		}
+		return resp.Matches[contexts.Deployments]
+	})
+}
+
+func (c *DeploymentPauseCommand) Name() string { return "deployment pause" }
+
 func (c *DeploymentPauseCommand) Run(args []string) int {
 	var verbose bool
 
-	flags := c.Meta.FlagSet("deployment pause", FlagSetClient)
+	flags := c.Meta.FlagSet(c.Name(), FlagSetClient)
 	flags.Usage = func() { c.Ui.Output(c.Help()) }
 	flags.BoolVar(&verbose, "verbose", false, "")
 
@@ -43,10 +70,11 @@ func (c *DeploymentPauseCommand) Run(args []string) int {
 		return 1
 	}
 
-	// Check that we got no arguments
+	// Check that we got exactly 1 argument
 	args = flags.Args()
 	if l := len(args); l != 1 {
-		c.Ui.Error(c.Help())
+		c.Ui.Error("This command takes one argument: <deployment id>")
+		c.Ui.Error(commandErrorText(c))
 		return 1
 	}
 

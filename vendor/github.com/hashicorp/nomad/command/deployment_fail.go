@@ -3,6 +3,9 @@ package command
 import (
 	"fmt"
 	"strings"
+
+	"github.com/hashicorp/nomad/api/contexts"
+	"github.com/posener/complete"
 )
 
 type DeploymentFailCommand struct {
@@ -13,10 +16,10 @@ func (c *DeploymentFailCommand) Help() string {
 	helpText := `
 Usage: nomad deployment fail [options] <deployment id>
 
-Fail is used to mark a deployment as failed. Failing a deployment will
-stop the placement of new allocations as part of rolling deployment and
-if the job is configured to auto revert, the job will attempt to roll back to a
-stable version.
+  Fail is used to mark a deployment as failed. Failing a deployment will
+  stop the placement of new allocations as part of rolling deployment and
+  if the job is configured to auto revert, the job will attempt to roll back to a
+  stable version.
 
 General Options:
 
@@ -39,10 +42,35 @@ func (c *DeploymentFailCommand) Synopsis() string {
 	return "Manually fail a deployment"
 }
 
+func (c *DeploymentFailCommand) AutocompleteFlags() complete.Flags {
+	return mergeAutocompleteFlags(c.Meta.AutocompleteFlags(FlagSetClient),
+		complete.Flags{
+			"-detach":  complete.PredictNothing,
+			"-verbose": complete.PredictNothing,
+		})
+}
+
+func (c *DeploymentFailCommand) AutocompleteArgs() complete.Predictor {
+	return complete.PredictFunc(func(a complete.Args) []string {
+		client, err := c.Meta.Client()
+		if err != nil {
+			return nil
+		}
+
+		resp, _, err := client.Search().PrefixSearch(a.Last, contexts.Deployments, nil)
+		if err != nil {
+			return []string{}
+		}
+		return resp.Matches[contexts.Deployments]
+	})
+}
+
+func (c *DeploymentFailCommand) Name() string { return "deployment fail" }
+
 func (c *DeploymentFailCommand) Run(args []string) int {
 	var detach, verbose bool
 
-	flags := c.Meta.FlagSet("deployment fail", FlagSetClient)
+	flags := c.Meta.FlagSet(c.Name(), FlagSetClient)
 	flags.Usage = func() { c.Ui.Output(c.Help()) }
 	flags.BoolVar(&detach, "detach", false, "")
 	flags.BoolVar(&verbose, "verbose", false, "")
@@ -54,7 +82,8 @@ func (c *DeploymentFailCommand) Run(args []string) int {
 	// Check that we got no arguments
 	args = flags.Args()
 	if l := len(args); l != 1 {
-		c.Ui.Error(c.Help())
+		c.Ui.Error("This command takes no arguments")
+		c.Ui.Error(commandErrorText(c))
 		return 1
 	}
 

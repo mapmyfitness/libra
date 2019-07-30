@@ -42,12 +42,12 @@ $ curl http://127.0.0.1:4646/v1/agent/members
 ```
 
 The conventions used in the API documentation do not list a port and use the
-standard URL `nomad.rocks`. Be sure to replace this with your Nomad agent URL
+standard URL `localhost:4646`. Be sure to replace this with your Nomad agent URL
 when using the examples.
 
 ## Data Model and Layout
 
-There are four primary nouns in Nomad:
+There are five primary nouns in Nomad:
 
 - jobs
 - nodes
@@ -73,11 +73,21 @@ administration.
 
 ## ACLs
 
-The Nomad API does not support ACLs at this time.
+Several endpoints in Nomad use or require ACL tokens to operate. The token are used to authenticate the request and determine if the request is allowed based on the associated authorizations. Tokens are specified per-request by using the `X-Nomad-Token` request header set to the `SecretID` of an ACL Token.
+
+For more details about ACLs, please see the [ACL Guide](/guides/acl.html).
 
 ## Authentication
 
-The Nomad API does not support authentication at this time.
+When ACLs are enabled, a Nomad token should be provided to API requests using the `X-Nomad-Token` header. When using authentication, clients should communicate via TLS.
+
+Here is an example using curl:
+
+```text
+$ curl \
+    --header "X-Nomad-Token: aa534e09-6a07-0a45-2295-a7f77063d429" \
+    https://localhost:4646/v1/jobs
+```
 
 ## Blocking Queries
 
@@ -156,7 +166,7 @@ accepts gzip compression. This is achieved by passing the accept encoding:
 ```
 $ curl \
     --header "Accept-Encoding: gzip" \
-    https://nomad.rocks/v1/...
+    https://localhost:4646/v1/...
 ```
 
 ## Formatted JSON Output
@@ -169,7 +179,7 @@ server-formatted data. Asking the server to format the data takes away
 processing cycles from more important tasks.
 
 ```
-$ curl https://nomad.rocks/v1/page?pretty
+$ curl https://localhost:4646/v1/page?pretty
 ```
 
 ## HTTP Methods

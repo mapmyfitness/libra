@@ -1,8 +1,8 @@
 package config
 
 import (
-	"github.com/underarmour/libra/nomad"
-	"github.com/underarmour/libra/structs"
+	"github.com/YotpoLtd/libra/nomad"
+	"github.com/YotpoLtd/libra/structs"
 )
 
 // RootConfig struct

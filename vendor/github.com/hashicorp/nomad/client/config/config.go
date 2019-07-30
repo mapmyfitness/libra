@@ -9,9 +9,9 @@ import (
 	"time"
 
 	"github.com/hashicorp/nomad/helper"
-	"github.com/hashicorp/nomad/helper/tlsutil"
 	"github.com/hashicorp/nomad/nomad/structs"
 	"github.com/hashicorp/nomad/nomad/structs/config"
+	"github.com/hashicorp/nomad/version"
 )
 
 var (
@@ -20,12 +20,11 @@ var (
 	DefaultEnvBlacklist = strings.Join([]string{
 		"CONSUL_TOKEN",
 		"VAULT_TOKEN",
-		"ATLAS_TOKEN",
 		"AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN",
 		"GOOGLE_APPLICATION_CREDENTIALS",
 	}, ",")
 
-	// DefaulUserBlacklist is the default set of users that tasks are not
+	// DefaultUserBlacklist is the default set of users that tasks are not
 	// allowed to run as when using a driver in "user.checked_drivers"
 	DefaultUserBlacklist = strings.Join([]string{
 		"root",
@@ -91,6 +90,10 @@ type Config struct {
 	// dynamically. It should be given as Cores * MHz (2 Cores * 2 Ghz = 4000)
 	CpuCompute int
 
+	// MemoryMB is the default node total memory in megabytes if it cannot be
+	// determined dynamically.
+	MemoryMB int
+
 	// MaxKillTimeout allows capping the user-specifiable KillTimeout. If the
 	// task's KillTimeout is greater than the MaxKillTimeout, MaxKillTimeout is
 	// used.
@@ -129,10 +132,7 @@ type Config struct {
 	Options map[string]string
 
 	// Version is the version of the Nomad client
-	Version string
-
-	// Revision is the commit number of the Nomad client
-	Revision string
+	Version *version.VersionInfo
 
 	// ConsulConfig is this Agent's Consul configuration
 	ConsulConfig *config.ConsulConfig
@@ -181,6 +181,30 @@ type Config struct {
 	// NoHostUUID disables using the host's UUID and will force generation of a
 	// random UUID.
 	NoHostUUID bool
+
+	// ACLEnabled controls if ACL enforcement and management is enabled.
+	ACLEnabled bool
+
+	// ACLTokenTTL is how long we cache token values for
+	ACLTokenTTL time.Duration
+
+	// ACLPolicyTTL is how long we cache policy values for
+	ACLPolicyTTL time.Duration
+
+	// DisableTaggedMetrics determines whether metrics will be displayed via a
+	// key/value/tag format, or simply a key/value format
+	DisableTaggedMetrics bool
+
+	// BackwardsCompatibleMetrics determines whether to show methods of
+	// displaying metrics for older versions, or to only show the new format
+	BackwardsCompatibleMetrics bool
+
+	// RPCHoldTimeout is how long an RPC can be "held" before it is errored.
+	// This is used to paper over a loss of leadership by instead holding RPCs,
+	// so that the caller experiences a slow response rather than an error.
+	// This period is meant to be long enough for a leader election to take
+	// place, and a small jitter is applied to avoid a thundering herd.
+	RPCHoldTimeout time.Duration
 }
 
 func (c *Config) Copy() *Config {
@@ -198,19 +222,23 @@ func (c *Config) Copy() *Config {
 // DefaultConfig returns the default configuration
 func DefaultConfig() *Config {
 	return &Config{
-		VaultConfig:             config.DefaultVaultConfig(),
-		ConsulConfig:            config.DefaultConsulConfig(),
-		LogOutput:               os.Stderr,
-		Region:                  "global",
-		StatsCollectionInterval: 1 * time.Second,
-		TLSConfig:               &config.TLSConfig{},
-		LogLevel:                "DEBUG",
-		GCInterval:              1 * time.Minute,
-		GCParallelDestroys:      2,
-		GCDiskUsageThreshold:    80,
-		GCInodeUsageThreshold:   70,
-		GCMaxAllocs:             50,
-		NoHostUUID:              true,
+		Version:                    version.GetVersion(),
+		VaultConfig:                config.DefaultVaultConfig(),
+		ConsulConfig:               config.DefaultConsulConfig(),
+		LogOutput:                  os.Stderr,
+		Region:                     "global",
+		StatsCollectionInterval:    1 * time.Second,
+		TLSConfig:                  &config.TLSConfig{},
+		LogLevel:                   "DEBUG",
+		GCInterval:                 1 * time.Minute,
+		GCParallelDestroys:         2,
+		GCDiskUsageThreshold:       80,
+		GCInodeUsageThreshold:      70,
+		GCMaxAllocs:                50,
+		NoHostUUID:                 true,
+		DisableTaggedMetrics:       false,
+		BackwardsCompatibleMetrics: false,
+		RPCHoldTimeout:             5 * time.Second,
 	}
 }
 
@@ -328,17 +356,4 @@ func (c *Config) ReadStringListToMapDefault(key, defaultValue string) map[string
 		}
 	}
 	return list
-}
-
-// TLSConfig returns a TLSUtil Config based on the client configuration
-func (c *Config) TLSConfiguration() *tlsutil.Config {
-	tlsConf := &tlsutil.Config{
-		VerifyIncoming:       true,
-		VerifyOutgoing:       true,
-		VerifyServerHostname: c.TLSConfig.VerifyServerHostname,
-		CAFile:               c.TLSConfig.CAFile,
-		CertFile:             c.TLSConfig.CertFile,
-		KeyFile:              c.TLSConfig.KeyFile,
-	}
-	return tlsConf
 }

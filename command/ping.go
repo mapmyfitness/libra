@@ -9,7 +9,7 @@ import (
 	"io/ioutil"
 
 	"github.com/mitchellh/cli"
-	"github.com/underarmour/libra/api"
+	"github.com/YotpoLtd/libra/api"
 )
 
 // PingCommand is a Command implementation prints the version.

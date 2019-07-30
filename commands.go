@@ -4,7 +4,7 @@ import (
 	"os"
 
 	"github.com/mitchellh/cli"
-	"github.com/underarmour/libra/command"
+	"github.com/YotpoLtd/libra/command"
 )
 
 // Commands returns the mapping of CLI commands for Libra.

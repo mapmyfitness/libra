@@ -14,22 +14,8 @@ import (
 	"github.com/hashicorp/nomad/client/driver/env"
 	cstructs "github.com/hashicorp/nomad/client/structs"
 	"github.com/hashicorp/nomad/nomad/mock"
-	"github.com/hashicorp/nomad/nomad/structs"
 	tu "github.com/hashicorp/nomad/testutil"
 	"github.com/mitchellh/go-ps"
-)
-
-var (
-	constraint = &structs.Resources{
-		CPU:      250,
-		MemoryMB: 256,
-		Networks: []*structs.NetworkResource{
-			&structs.NetworkResource{
-				MBits:        50,
-				DynamicPorts: []structs.Port{{Label: "http"}},
-			},
-		},
-	}
 )
 
 func testLogger() *log.Logger {
@@ -243,7 +229,7 @@ func TestExecutor_MakeExecutable(t *testing.T) {
 	// Set its permissions to be non-executable
 	f.Chmod(os.FileMode(0610))
 
-	// Make a fake exececutor
+	// Make a fake executor
 	executor := NewExecutor(log.New(os.Stdout, "", log.LstdFlags))
 
 	err = executor.(*UniversalExecutor).makeExecutable(f.Name())
@@ -272,7 +258,7 @@ func TestScanPids(t *testing.T) {
 	p4 := NewFakeProcess(3, 10)
 	p5 := NewFakeProcess(20, 18)
 
-	// Make a fake exececutor
+	// Make a fake executor
 	executor := NewExecutor(log.New(os.Stdout, "", log.LstdFlags)).(*UniversalExecutor)
 
 	nomadPids, err := executor.scanPids(5, []ps.Process{p1, p2, p3, p4, p5})
