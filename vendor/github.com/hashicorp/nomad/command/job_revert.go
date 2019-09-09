@@ -3,6 +3,9 @@ package command
 import (
 	"fmt"
 	"strings"
+
+	"github.com/hashicorp/nomad/api/contexts"
+	"github.com/posener/complete"
 )
 
 type JobRevertCommand struct {
@@ -13,8 +16,8 @@ func (c *JobRevertCommand) Help() string {
 	helpText := `
 Usage: nomad job revert [options] <job> <version>
 
-Revert is used to revert a job to a prior version of the job. The available
-versions to revert to can be found using "nomad job history" command.
+  Revert is used to revert a job to a prior version of the job. The available
+  versions to revert to can be found using "nomad job history" command.
 
 General Options:
 
@@ -37,10 +40,35 @@ func (c *JobRevertCommand) Synopsis() string {
 	return "Revert to a prior version of the job"
 }
 
+func (c *JobRevertCommand) AutocompleteFlags() complete.Flags {
+	return mergeAutocompleteFlags(c.Meta.AutocompleteFlags(FlagSetClient),
+		complete.Flags{
+			"-detach":  complete.PredictNothing,
+			"-verbose": complete.PredictNothing,
+		})
+}
+
+func (c *JobRevertCommand) AutocompleteArgs() complete.Predictor {
+	return complete.PredictFunc(func(a complete.Args) []string {
+		client, err := c.Meta.Client()
+		if err != nil {
+			return nil
+		}
+
+		resp, _, err := client.Search().PrefixSearch(a.Last, contexts.Jobs, nil)
+		if err != nil {
+			return []string{}
+		}
+		return resp.Matches[contexts.Jobs]
+	})
+}
+
+func (c *JobRevertCommand) Name() string { return "job revert" }
+
 func (c *JobRevertCommand) Run(args []string) int {
 	var detach, verbose bool
 
-	flags := c.Meta.FlagSet("job revert", FlagSetClient)
+	flags := c.Meta.FlagSet(c.Name(), FlagSetClient)
 	flags.Usage = func() { c.Ui.Output(c.Help()) }
 	flags.BoolVar(&detach, "detach", false, "")
 	flags.BoolVar(&verbose, "verbose", false, "")
@@ -58,7 +86,8 @@ func (c *JobRevertCommand) Run(args []string) int {
 	// Check that we got two args
 	args = flags.Args()
 	if l := len(args); l != 2 {
-		c.Ui.Error(c.Help())
+		c.Ui.Error("This command takes two arguments: <job> <version>")
+		c.Ui.Error(commandErrorText(c))
 		return 1
 	}
 

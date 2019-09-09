@@ -4,10 +4,14 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/hashicorp/nomad/api"
 	"github.com/hashicorp/nomad/command/agent"
 	"github.com/hashicorp/nomad/testutil"
 	"github.com/mitchellh/cli"
+	"github.com/posener/complete"
+	"github.com/stretchr/testify/assert"
 )
 
 func TestNodeStatusCommand_Implements(t *testing.T) {
@@ -125,8 +129,8 @@ func TestNodeStatusCommand_Run(t *testing.T) {
 		t.Fatalf("should not dump allocations")
 	}
 
-	// Query a single node based on prefix
-	if code := cmd.Run([]string{"-address=" + url, nodeID[:4]}); code != 0 {
+	// Query a single node based on a prefix that is even without the hyphen
+	if code := cmd.Run([]string{"-address=" + url, nodeID[:13]}); code != 0 {
 		t.Fatalf("expected exit 0, got: %d", code)
 	}
 	out = ui.OutputWriter.String()
@@ -173,7 +177,7 @@ func TestNodeStatusCommand_Fails(t *testing.T) {
 	if code := cmd.Run([]string{"some", "bad", "args"}); code != 1 {
 		t.Fatalf("expected exit code 1, got: %d", code)
 	}
-	if out := ui.ErrorWriter.String(); !strings.Contains(out, cmd.Help()) {
+	if out := ui.ErrorWriter.String(); !strings.Contains(out, commandErrorText(cmd)) {
 		t.Fatalf("expected help output, got: %s", out)
 	}
 	ui.ErrorWriter.Reset()
@@ -187,7 +191,7 @@ func TestNodeStatusCommand_Fails(t *testing.T) {
 	}
 	ui.ErrorWriter.Reset()
 
-	// Fails on non-existent node
+	// Fails on nonexistent node
 	if code := cmd.Run([]string{"-address=" + url, "12345678-abcd-efab-cdef-123456789abc"}); code != 1 {
 		t.Fatalf("expected exit 1, got: %d", code)
 	}
@@ -212,4 +216,63 @@ func TestNodeStatusCommand_Fails(t *testing.T) {
 	if out := ui.ErrorWriter.String(); !strings.Contains(out, "Both json and template formatting are not allowed") {
 		t.Fatalf("expected getting formatter error, got: %s", out)
 	}
+}
+
+func TestNodeStatusCommand_AutocompleteArgs(t *testing.T) {
+	assert := assert.New(t)
+	t.Parallel()
+
+	srv, client, url := testServer(t, true, nil)
+	defer srv.Shutdown()
+
+	// Wait for a node to appear
+	var nodeID string
+	testutil.WaitForResult(func() (bool, error) {
+		nodes, _, err := client.Nodes().List(nil)
+		if err != nil {
+			return false, err
+		}
+		if len(nodes) == 0 {
+			return false, fmt.Errorf("missing node")
+		}
+		nodeID = nodes[0].ID
+		return true, nil
+	}, func(err error) {
+		t.Fatalf("err: %s", err)
+	})
+
+	ui := new(cli.MockUi)
+	cmd := &NodeStatusCommand{Meta: Meta{Ui: ui, flagAddress: url}}
+
+	prefix := nodeID[:len(nodeID)-5]
+	args := complete.Args{Last: prefix}
+	predictor := cmd.AutocompleteArgs()
+
+	res := predictor.Predict(args)
+	assert.Equal(1, len(res))
+	assert.Equal(nodeID, res[0])
+}
+
+func TestNodeStatusCommand_FormatDrain(t *testing.T) {
+	t.Parallel()
+	assert := assert.New(t)
+
+	node := &api.Node{}
+
+	assert.Equal("false", formatDrain(node))
+
+	node.DrainStrategy = &api.DrainStrategy{}
+	assert.Equal("true; no deadline", formatDrain(node))
+
+	node.DrainStrategy = &api.DrainStrategy{}
+	node.DrainStrategy.Deadline = -1 * time.Second
+	assert.Equal("true; force drain", formatDrain(node))
+
+	// formatTime special cases Unix(0, 0), so increment by 1
+	node.DrainStrategy = &api.DrainStrategy{}
+	node.DrainStrategy.ForceDeadline = time.Unix(1, 0).UTC()
+	assert.Equal("true; 1970-01-01T00:00:01Z deadline", formatDrain(node))
+
+	node.DrainStrategy.IgnoreSystemJobs = true
+	assert.Equal("true; 1970-01-01T00:00:01Z deadline; ignoring system jobs", formatDrain(node))
 }

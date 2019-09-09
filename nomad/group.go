@@ -1,6 +1,6 @@
 package nomad
 
-import "github.com/underarmour/libra/structs"
+import "github.com/YotpoLtd/libra/structs"
 
 // Group struct
 type Group struct {

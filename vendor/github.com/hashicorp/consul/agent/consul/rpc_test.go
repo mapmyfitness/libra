@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"github.com/hashicorp/consul/agent/consul/state"
-	"github.com/hashicorp/consul/agent/consul/structs"
+	"github.com/hashicorp/consul/agent/structs"
 	"github.com/hashicorp/consul/testrpc"
 	"github.com/hashicorp/consul/testutil/retry"
 	"github.com/hashicorp/go-memdb"
@@ -75,6 +75,24 @@ func TestRPC_NoLeader_Retry(t *testing.T) {
 	if err != nil {
 		t.Fatalf("bad: %v", err)
 	}
+}
+
+type MockSink struct {
+	*bytes.Buffer
+	cancel bool
+}
+
+func (m *MockSink) ID() string {
+	return "Mock"
+}
+
+func (m *MockSink) Cancel() error {
+	m.cancel = true
+	return nil
+}
+
+func (m *MockSink) Close() error {
+	return nil
 }
 
 func TestRPC_blockingQuery(t *testing.T) {

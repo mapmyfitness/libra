@@ -6,7 +6,7 @@ import (
 	"time"
 
 	docker "github.com/fsouza/go-dockerclient"
-	"github.com/hashicorp/nomad/nomad/structs"
+	"github.com/hashicorp/nomad/helper/uuid"
 	"github.com/hashicorp/nomad/testutil"
 )
 
@@ -46,7 +46,7 @@ func (m *mockImageClient) RemoveImage(id string) error {
 func TestDockerCoordinator_ConcurrentPulls(t *testing.T) {
 	t.Parallel()
 	image := "foo"
-	imageID := structs.GenerateUUID()
+	imageID := uuid.Generate()
 	mapping := map[string]string{imageID: image}
 
 	// Add a delay so we can get multiple queued up
@@ -64,7 +64,7 @@ func TestDockerCoordinator_ConcurrentPulls(t *testing.T) {
 	id := ""
 	for i := 0; i < 10; i++ {
 		go func() {
-			id, _ = coordinator.PullImage(image, nil, structs.GenerateUUID())
+			id, _ = coordinator.PullImage(image, nil, uuid.Generate(), nil)
 		}()
 	}
 
@@ -93,7 +93,7 @@ func TestDockerCoordinator_ConcurrentPulls(t *testing.T) {
 func TestDockerCoordinator_Pull_Remove(t *testing.T) {
 	t.Parallel()
 	image := "foo"
-	imageID := structs.GenerateUUID()
+	imageID := uuid.Generate()
 	mapping := map[string]string{imageID: image}
 
 	// Add a delay so we can get multiple queued up
@@ -111,8 +111,8 @@ func TestDockerCoordinator_Pull_Remove(t *testing.T) {
 	id := ""
 	callerIDs := make([]string, 10, 10)
 	for i := 0; i < 10; i++ {
-		callerIDs[i] = structs.GenerateUUID()
-		id, _ = coordinator.PullImage(image, nil, callerIDs[i])
+		callerIDs[i] = uuid.Generate()
+		id, _ = coordinator.PullImage(image, nil, callerIDs[i], nil)
 	}
 
 	// Check the reference count
@@ -157,7 +157,7 @@ func TestDockerCoordinator_Pull_Remove(t *testing.T) {
 func TestDockerCoordinator_Remove_Cancel(t *testing.T) {
 	t.Parallel()
 	image := "foo"
-	imageID := structs.GenerateUUID()
+	imageID := uuid.Generate()
 	mapping := map[string]string{imageID: image}
 
 	mock := newMockImageClient(mapping, 1*time.Millisecond)
@@ -170,10 +170,10 @@ func TestDockerCoordinator_Remove_Cancel(t *testing.T) {
 
 	// Create a coordinator
 	coordinator := NewDockerCoordinator(config)
-	callerID := structs.GenerateUUID()
+	callerID := uuid.Generate()
 
 	// Pull image
-	id, _ := coordinator.PullImage(image, nil, callerID)
+	id, _ := coordinator.PullImage(image, nil, callerID, nil)
 
 	// Check the reference count
 	if references := coordinator.imageRefCount[id]; len(references) != 1 {
@@ -189,7 +189,7 @@ func TestDockerCoordinator_Remove_Cancel(t *testing.T) {
 	}
 
 	// Pull image again within delay
-	id, _ = coordinator.PullImage(image, nil, callerID)
+	id, _ = coordinator.PullImage(image, nil, callerID, nil)
 
 	// Check the reference count
 	if references := coordinator.imageRefCount[id]; len(references) != 1 {
@@ -205,7 +205,7 @@ func TestDockerCoordinator_Remove_Cancel(t *testing.T) {
 func TestDockerCoordinator_No_Cleanup(t *testing.T) {
 	t.Parallel()
 	image := "foo"
-	imageID := structs.GenerateUUID()
+	imageID := uuid.Generate()
 	mapping := map[string]string{imageID: image}
 
 	mock := newMockImageClient(mapping, 1*time.Millisecond)
@@ -218,10 +218,10 @@ func TestDockerCoordinator_No_Cleanup(t *testing.T) {
 
 	// Create a coordinator
 	coordinator := NewDockerCoordinator(config)
-	callerID := structs.GenerateUUID()
+	callerID := uuid.Generate()
 
 	// Pull image
-	id, _ := coordinator.PullImage(image, nil, callerID)
+	id, _ := coordinator.PullImage(image, nil, callerID, nil)
 
 	// Check the reference count
 	if references := coordinator.imageRefCount[id]; len(references) != 0 {

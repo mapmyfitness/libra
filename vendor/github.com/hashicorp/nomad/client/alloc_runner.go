@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	metrics "github.com/armon/go-metrics"
 	"github.com/boltdb/bolt"
 	"github.com/hashicorp/go-multierror"
 	"github.com/hashicorp/nomad/client/allocdir"
@@ -18,16 +19,6 @@ import (
 	"github.com/hashicorp/nomad/nomad/structs"
 
 	cstructs "github.com/hashicorp/nomad/client/structs"
-)
-
-const (
-	// taskReceivedSyncLimit is how long the client will wait before sending
-	// that a task was received to the server. The client does not immediately
-	// send that the task was received to the server because another transition
-	// to running or failed is likely to occur immediately after and a single
-	// update will transfer all past state information. If not other transition
-	// has occurred up to this limit, we will send to the server.
-	taskReceivedSyncLimit = 30 * time.Second
 )
 
 var (
@@ -59,7 +50,8 @@ type AllocRunner struct {
 	alloc                  *structs.Allocation
 	allocClientStatus      string // Explicit status of allocation. Set when there are failures
 	allocClientDescription string
-	allocHealth            *bool // Whether the allocation is healthy
+	allocHealth            *bool     // Whether the allocation is healthy
+	allocHealthTime        time.Time // Time at which allocation health has been set
 	allocBroadcast         *cstructs.AllocBroadcaster
 	allocLock              sync.Mutex
 
@@ -80,10 +72,19 @@ type AllocRunner struct {
 	vaultClient  vaultclient.VaultClient
 	consulClient ConsulServiceAPI
 
-	otherAllocDir *allocdir.AllocDir
+	// prevAlloc allows for Waiting until a previous allocation exits and
+	// the migrates it data. If sticky volumes aren't used and there's no
+	// previous allocation a noop implementation is used so it always safe
+	// to call.
+	prevAlloc prevAllocWatcher
 
+	// ctx is cancelled with exitFn to cause the alloc to be destroyed
+	// (stopped and GC'd).
 	ctx    context.Context
 	exitFn context.CancelFunc
+
+	// waitCh is closed when the Run method exits. At that point the alloc
+	// has stopped and been GC'd.
 	waitCh chan struct{}
 
 	// State related fields
@@ -102,6 +103,10 @@ type AllocRunner struct {
 	// can lower write volume by not re-writing these values
 	immutablePersisted bool
 	allocDirPersisted  bool
+
+	// baseLabels are used when emitting tagged metrics. All alloc runner metrics
+	// will have these tags, and optionally more.
+	baseLabels []metrics.Label
 }
 
 // COMPAT: Remove in 0.7.0
@@ -149,8 +154,8 @@ type allocRunnerMutableState struct {
 
 // NewAllocRunner is used to create a new allocation context
 func NewAllocRunner(logger *log.Logger, config *config.Config, stateDB *bolt.DB, updater AllocStateUpdater,
-	alloc *structs.Allocation, vaultClient vaultclient.VaultClient,
-	consulClient ConsulServiceAPI) *AllocRunner {
+	alloc *structs.Allocation, vaultClient vaultclient.VaultClient, consulClient ConsulServiceAPI,
+	prevAlloc prevAllocWatcher) *AllocRunner {
 
 	ar := &AllocRunner{
 		config:         config,
@@ -160,6 +165,7 @@ func NewAllocRunner(logger *log.Logger, config *config.Config, stateDB *bolt.DB,
 		alloc:          alloc,
 		allocID:        alloc.ID,
 		allocBroadcast: cstructs.NewAllocBroadcaster(8),
+		prevAlloc:      prevAlloc,
 		dirtyCh:        make(chan struct{}, 1),
 		allocDir:       allocdir.NewAllocDir(logger, filepath.Join(config.AllocDir, alloc.ID)),
 		tasks:          make(map[string]*TaskRunner),
@@ -173,7 +179,33 @@ func NewAllocRunner(logger *log.Logger, config *config.Config, stateDB *bolt.DB,
 
 	// TODO Should be passed a context
 	ar.ctx, ar.exitFn = context.WithCancel(context.TODO())
+
 	return ar
+}
+
+// setBaseLabels creates the set of base labels. This should be called after
+// Restore has been called so the allocation is guaranteed to be loaded
+func (r *AllocRunner) setBaseLabels() {
+	r.baseLabels = make([]metrics.Label, 0, 3)
+
+	if r.alloc.Job != nil {
+		r.baseLabels = append(r.baseLabels, metrics.Label{
+			Name:  "job",
+			Value: r.alloc.Job.Name,
+		})
+	}
+	if r.alloc.TaskGroup != "" {
+		r.baseLabels = append(r.baseLabels, metrics.Label{
+			Name:  "task_group",
+			Value: r.alloc.TaskGroup,
+		})
+	}
+	if r.config != nil && r.config.Node != nil {
+		r.baseLabels = append(r.baseLabels, metrics.Label{
+			Name:  "node_id",
+			Value: r.config.Node.ID,
+		})
+	}
 }
 
 // pre060StateFilePath returns the path to our state file that would have been
@@ -331,7 +363,8 @@ func (r *AllocRunner) RestoreState() error {
 			// Restart task runner if RestoreState gave a reason
 			if restartReason != "" {
 				r.logger.Printf("[INFO] client: restarting alloc %s task %s: %v", r.allocID, name, restartReason)
-				tr.Restart("upgrade", restartReason)
+				const failure = false
+				tr.Restart("upgrade", restartReason, failure)
 			}
 		} else {
 			tr.Destroy(taskDestroyEvent)
@@ -414,7 +447,7 @@ func (r *AllocRunner) saveAllocRunnerState() error {
 		// Write immutable data iff it hasn't been written yet
 		if !r.immutablePersisted {
 			immutable := &allocRunnerImmutableState{
-				Version: r.config.Version,
+				Version: r.config.Version.VersionNumber(),
 			}
 
 			if err := putObject(allocBkt, allocRunnerStateImmutableKey, &immutable); err != nil {
@@ -476,6 +509,12 @@ func (r *AllocRunner) GetAllocDir() *allocdir.AllocDir {
 	return r.allocDir
 }
 
+// GetListener returns a listener for updates broadcast by this alloc runner.
+// Callers are responsible for calling Close on their Listener.
+func (r *AllocRunner) GetListener() *cstructs.AllocListener {
+	return r.allocBroadcast.Listen()
+}
+
 // copyTaskStates returns a copy of the passed task states.
 func copyTaskStates(states map[string]*structs.TaskState) map[string]*structs.TaskState {
 	copy := make(map[string]*structs.TaskState, len(states))
@@ -483,6 +522,35 @@ func copyTaskStates(states map[string]*structs.TaskState) map[string]*structs.Ta
 		copy[task] = state.Copy()
 	}
 	return copy
+}
+
+// finalizeTerminalAlloc sets any missing required fields like
+// finishedAt in the alloc runner's task States. finishedAt is used
+// to calculate reschedule time for failed allocs, so we make sure that
+// it is set
+func (r *AllocRunner) finalizeTerminalAlloc(alloc *structs.Allocation) {
+	if !alloc.ClientTerminalStatus() {
+		return
+	}
+	r.taskStatusLock.Lock()
+	defer r.taskStatusLock.Unlock()
+
+	group := alloc.Job.LookupTaskGroup(alloc.TaskGroup)
+	if r.taskStates == nil {
+		r.taskStates = make(map[string]*structs.TaskState)
+	}
+	now := time.Now()
+	for _, task := range group.Tasks {
+		ts, ok := r.taskStates[task.Name]
+		if !ok {
+			ts = &structs.TaskState{}
+			r.taskStates[task.Name] = ts
+		}
+		if ts.FinishedAt.IsZero() {
+			ts.FinishedAt = now
+		}
+	}
+	alloc.TaskStates = copyTaskStates(r.taskStates)
 }
 
 // Alloc returns the associated allocation
@@ -503,6 +571,7 @@ func (r *AllocRunner) Alloc() *structs.Allocation {
 		r.taskStatusLock.RUnlock()
 
 		r.allocLock.Unlock()
+		r.finalizeTerminalAlloc(alloc)
 		return alloc
 	}
 
@@ -512,6 +581,7 @@ func (r *AllocRunner) Alloc() *structs.Allocation {
 			alloc.DeploymentStatus = &structs.AllocDeploymentStatus{}
 		}
 		alloc.DeploymentStatus.Healthy = helper.BoolToPtr(*r.allocHealth)
+		alloc.DeploymentStatus.Timestamp = r.allocHealthTime
 	}
 	r.allocLock.Unlock()
 
@@ -531,7 +601,7 @@ func (r *AllocRunner) Alloc() *structs.Allocation {
 		}
 	}
 	r.allocLock.Unlock()
-
+	r.finalizeTerminalAlloc(alloc)
 	return alloc
 }
 
@@ -620,9 +690,10 @@ func (r *AllocRunner) setStatus(status, desc string) {
 	}
 }
 
-// setTaskState is used to set the status of a task. If state is empty then the
-// event is appended but not synced with the server. The event may be omitted
-func (r *AllocRunner) setTaskState(taskName, state string, event *structs.TaskEvent) {
+// setTaskState is used to set the status of a task. If lazySync is set then the
+// event is appended but not synced with the server. If state is omitted, the
+// last known state is used.
+func (r *AllocRunner) setTaskState(taskName, state string, event *structs.TaskEvent, lazySync bool) {
 	r.taskStatusLock.Lock()
 	defer r.taskStatusLock.Unlock()
 	taskState, ok := r.taskStates[taskName]
@@ -637,14 +708,29 @@ func (r *AllocRunner) setTaskState(taskName, state string, event *structs.TaskEv
 			taskState.Failed = true
 		}
 		if event.Type == structs.TaskRestarting {
+			if !r.config.DisableTaggedMetrics {
+				metrics.IncrCounterWithLabels([]string{"client", "allocs", "restart"},
+					1, r.baseLabels)
+			}
+			if r.config.BackwardsCompatibleMetrics {
+				metrics.IncrCounter([]string{"client", "allocs", r.alloc.Job.Name, r.alloc.TaskGroup, taskName, "restart"}, 1)
+			}
 			taskState.Restarts++
 			taskState.LastRestart = time.Unix(0, event.Time)
 		}
 		r.appendTaskEvent(taskState, event)
 	}
 
-	if state == "" {
+	if lazySync {
 		return
+	}
+
+	// If the state hasn't been set use the existing state.
+	if state == "" {
+		state = taskState.State
+		if taskState.State == "" {
+			state = structs.TaskStatePending
+		}
 	}
 
 	switch state {
@@ -652,11 +738,17 @@ func (r *AllocRunner) setTaskState(taskName, state string, event *structs.TaskEv
 		// Capture the start time if it is just starting
 		if taskState.State != structs.TaskStateRunning {
 			taskState.StartedAt = time.Now().UTC()
+			if !r.config.DisableTaggedMetrics {
+				metrics.IncrCounterWithLabels([]string{"client", "allocs", "running"},
+					1, r.baseLabels)
+			}
+			if r.config.BackwardsCompatibleMetrics {
+				metrics.IncrCounter([]string{"client", "allocs", r.alloc.Job.Name, r.alloc.TaskGroup, taskName, "running"}, 1)
+			}
 		}
 	case structs.TaskStateDead:
-		// Capture the finished time. If it has never started there is no finish
-		// time
-		if !taskState.StartedAt.IsZero() {
+		// Capture the finished time if not already set
+		if taskState.FinishedAt.IsZero() {
 			taskState.FinishedAt = time.Now().UTC()
 		}
 
@@ -674,6 +766,24 @@ func (r *AllocRunner) setTaskState(taskName, state string, event *structs.TaskEv
 			}
 		}
 
+		// Emitting metrics to indicate task complete and failures
+		if taskState.Failed {
+			if !r.config.DisableTaggedMetrics {
+				metrics.IncrCounterWithLabels([]string{"client", "allocs", "failed"},
+					1, r.baseLabels)
+			}
+			if r.config.BackwardsCompatibleMetrics {
+				metrics.IncrCounter([]string{"client", "allocs", r.alloc.Job.Name, r.alloc.TaskGroup, taskName, "failed"}, 1)
+			}
+		} else {
+			if !r.config.DisableTaggedMetrics {
+				metrics.IncrCounterWithLabels([]string{"client", "allocs", "complete"},
+					1, r.baseLabels)
+			}
+			if r.config.BackwardsCompatibleMetrics {
+				metrics.IncrCounter([]string{"client", "allocs", r.alloc.Job.Name, r.alloc.TaskGroup, taskName, "complete"}, 1)
+			}
+		}
 		// If the task failed, we should kill all the other tasks in the task group.
 		if taskState.Failed {
 			for _, tr := range otherTaskRunners {
@@ -722,6 +832,7 @@ func (r *AllocRunner) appendTaskEvent(state *structs.TaskState, event *structs.T
 // Run is a long running goroutine used to manage an allocation
 func (r *AllocRunner) Run() {
 	defer close(r.waitCh)
+	r.setBaseLabels()
 	go r.dirtySyncState()
 
 	// Find the task group to run in the allocation
@@ -733,36 +844,66 @@ func (r *AllocRunner) Run() {
 		return
 	}
 
-	// Create the execution context
-	r.allocDirLock.Lock()
 	// Build allocation directory (idempotent)
-	if err := r.allocDir.Build(); err != nil {
-		r.logger.Printf("[ERR] client: failed to build task directories: %v", err)
+	r.allocDirLock.Lock()
+	err := r.allocDir.Build()
+	r.allocDirLock.Unlock()
+
+	if err != nil {
+		r.logger.Printf("[ERR] client: alloc %q failed to build task directories: %v", r.allocID, err)
 		r.setStatus(structs.AllocClientStatusFailed, fmt.Sprintf("failed to build task dirs for '%s'", alloc.TaskGroup))
-		r.allocDirLock.Unlock()
 		return
 	}
 
-	if r.otherAllocDir != nil {
-		if err := r.allocDir.Move(r.otherAllocDir, tg.Tasks); err != nil {
-			r.logger.Printf("[ERR] client: failed to move alloc dir into alloc %q: %v", r.allocID, err)
+	// Wait for a previous alloc - if any - to terminate
+	if err := r.prevAlloc.Wait(r.ctx); err != nil {
+		if err == context.Canceled {
+			return
 		}
-		if err := r.otherAllocDir.Destroy(); err != nil {
-			r.logger.Printf("[ERR] client: error destroying allocdir %v: %v", r.otherAllocDir.AllocDir, err)
+		r.setStatus(structs.AllocClientStatusFailed, fmt.Sprintf("error while waiting for previous alloc to terminate: %v", err))
+		return
+	}
+
+	// Wait for data to be migrated from a previous alloc if applicable
+	if err := r.prevAlloc.Migrate(r.ctx, r.allocDir); err != nil {
+		if err == context.Canceled {
+			return
+		}
+
+		// Soft-fail on migration errors
+		r.logger.Printf("[WARN] client: alloc %q error while migrating data from previous alloc: %v", r.allocID, err)
+
+		// Recreate alloc dir to ensure a clean slate
+		r.allocDir.Destroy()
+		if err := r.allocDir.Build(); err != nil {
+			r.logger.Printf("[ERR] client: alloc %q failed to clean task directories after failed migration: %v", r.allocID, err)
+			r.setStatus(structs.AllocClientStatusFailed, fmt.Sprintf("failed to rebuild task dirs for '%s'", alloc.TaskGroup))
+			return
 		}
 	}
-	r.allocDirLock.Unlock()
 
 	// Check if the allocation is in a terminal status. In this case, we don't
 	// start any of the task runners and directly wait for the destroy signal to
 	// clean up the allocation.
 	if alloc.TerminalStatus() {
 		r.logger.Printf("[DEBUG] client: alloc %q in terminal status, waiting for destroy", r.allocID)
-		// mark this allocation as completed.
-		r.setStatus(structs.AllocClientStatusComplete, "cancelled running tasks for allocation in terminal state")
+		// mark this allocation as completed if it is not already in a
+		// terminal state
+		if !alloc.Terminated() {
+			r.setStatus(structs.AllocClientStatusComplete, "canceled running tasks for allocation in terminal state")
+		}
 		r.handleDestroy()
 		r.logger.Printf("[DEBUG] client: terminating runner for alloc '%s'", r.allocID)
 		return
+	}
+
+	// Increment alloc runner start counter. Incr'd even when restoring existing tasks so 1 start != 1 task execution
+	if !r.config.DisableTaggedMetrics {
+		metrics.IncrCounterWithLabels([]string{"client", "allocs", "start"},
+			1, r.baseLabels)
+	}
+	if r.config.BackwardsCompatibleMetrics {
+		metrics.IncrCounter([]string{"client", "allocs", r.alloc.Job.Name, r.alloc.TaskGroup, "start"}, 1)
 	}
 
 	// Start the watcher
@@ -789,7 +930,7 @@ func (r *AllocRunner) Run() {
 	}
 	r.taskLock.Unlock()
 
-	// taskDestroyEvent contains an event that caused the destroyment of a task
+	// taskDestroyEvent contains an event that caused the destruction of a task
 	// in the allocation.
 	var taskDestroyEvent *structs.TaskEvent
 
@@ -804,6 +945,7 @@ OUTER:
 			// If the deployment ids have changed clear the health
 			if r.alloc.DeploymentID != update.DeploymentID {
 				r.allocHealth = nil
+				r.allocHealthTime = time.Time{}
 			}
 
 			r.alloc = update
@@ -830,6 +972,7 @@ OUTER:
 				r.logger.Printf("[WARN] client: failed to sync alloc %q status upon receiving alloc update: %v",
 					r.allocID, err)
 			}
+
 		case <-r.ctx.Done():
 			taskDestroyEvent = structs.NewTaskEvent(structs.TaskKilled)
 			break OUTER
@@ -846,12 +989,6 @@ OUTER:
 	watcherCancel()
 
 	r.logger.Printf("[DEBUG] client: terminating runner for alloc '%s'", r.allocID)
-}
-
-// SetPreviousAllocDir sets the previous allocation directory of the current
-// allocation
-func (r *AllocRunner) SetPreviousAllocDir(allocDir *allocdir.AllocDir) {
-	r.otherAllocDir = allocDir
 }
 
 // destroyTaskRunners destroys the task runners, waits for them to terminate and
@@ -871,10 +1008,17 @@ func (r *AllocRunner) destroyTaskRunners(destroyEvent *structs.TaskEvent) {
 		tr := r.tasks[leader]
 		r.taskLock.RUnlock()
 
-		r.logger.Printf("[DEBUG] client: alloc %q destroying leader task %q of task group %q first",
-			r.allocID, leader, r.alloc.TaskGroup)
-		tr.Destroy(destroyEvent)
-		<-tr.WaitCh()
+		// Dead tasks don't have a task runner created so guard against
+		// the leader being dead when this AR was saved.
+		if tr == nil {
+			r.logger.Printf("[DEBUG] client: alloc %q leader task %q of task group %q already stopped",
+				r.allocID, leader, r.alloc.TaskGroup)
+		} else {
+			r.logger.Printf("[DEBUG] client: alloc %q destroying leader task %q of task group %q first",
+				r.allocID, leader, r.alloc.TaskGroup)
+			tr.Destroy(destroyEvent)
+			<-tr.WaitCh()
+		}
 	}
 
 	// Then destroy non-leader tasks concurrently
@@ -899,10 +1043,14 @@ func (r *AllocRunner) handleDestroy() {
 	// state as we wait for a destroy.
 	alloc := r.Alloc()
 
-	//TODO(schmichael) updater can cause a GC which can block on this alloc
-	// runner shutting down. Since handleDestroy can be called by Run() we
-	// can't block shutdown here as it would cause a deadlock.
-	go r.updater(alloc)
+	// Increment the destroy count for this alloc runner since this allocation is being removed from this client.
+	if !r.config.DisableTaggedMetrics {
+		metrics.IncrCounterWithLabels([]string{"client", "allocs", "destroy"},
+			1, r.baseLabels)
+	}
+	if r.config.BackwardsCompatibleMetrics {
+		metrics.IncrCounter([]string{"client", "allocs", r.alloc.Job.Name, r.alloc.TaskGroup, "destroy"}, 1)
+	}
 
 	// Broadcast and persist state synchronously
 	r.sendBroadcast(alloc)
@@ -910,6 +1058,17 @@ func (r *AllocRunner) handleDestroy() {
 		r.logger.Printf("[WARN] client: alloc %q unable to persist state but should be GC'd soon anyway:%v",
 			r.allocID, err)
 	}
+
+	// Unmount any mounted directories as no tasks are running and makes
+	// cleaning up Nomad's data directory simpler.
+	if err := r.allocDir.UnmountAll(); err != nil {
+		r.logger.Printf("[ERR] client: alloc %q unable unmount task directories: %v", r.allocID, err)
+	}
+
+	// Update the server with the alloc's status -- also marks the alloc as
+	// being eligible for GC, so from this point on the alloc can be gc'd
+	// at any time.
+	r.updater(alloc)
 
 	for {
 		select {
@@ -928,6 +1087,18 @@ func (r *AllocRunner) handleDestroy() {
 			r.logger.Printf("[DEBUG] client: dropping update to terminal alloc '%s'", r.allocID)
 		}
 	}
+}
+
+// IsWaiting returns true if this alloc is waiting on a previous allocation to
+// terminate.
+func (r *AllocRunner) IsWaiting() bool {
+	return r.prevAlloc.IsWaiting()
+}
+
+// IsMigrating returns true if this alloc is migrating data from a previous
+// allocation.
+func (r *AllocRunner) IsMigrating() bool {
+	return r.prevAlloc.IsMigrating()
 }
 
 // Update is used to update the allocation of the context
@@ -1027,6 +1198,17 @@ func (r *AllocRunner) Destroy() {
 
 	r.exitFn()
 	r.allocBroadcast.Close()
+}
+
+// IsDestroyed returns true if the AllocRunner is not running and has been
+// destroyed (GC'd).
+func (r *AllocRunner) IsDestroyed() bool {
+	select {
+	case <-r.waitCh:
+		return true
+	default:
+		return false
+	}
 }
 
 // WaitCh returns a channel to wait for termination

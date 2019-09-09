@@ -58,6 +58,20 @@ The following options are available on all telemetry configurations.
 - `publish_node_metrics` `(bool: false)` - Specifies if Nomad should publish
   runtime metrics of nodes.
 
+- `backwards_compatible_metrics` `(bool: false)` - Specifies if Nomad should
+  publish metrics that are backwards compatible with versions below 0.7, as
+  post version 0.7, Nomad emits tagged metrics. All new metrics will
+  only be added to tagged metrics. Note that this option is used to transition
+  monitoring to tagged metrics and will eventually be deprecated.
+
+
+- `disable_tagged_metrics` `(bool: false)` - Specifies if Nomad should not emit
+  tagged metrics and only emit metrics compatible with versions below Nomad
+  0.7. Note that this option is used to transition monitoring to tagged
+  metrics and will eventually be deprecated.
+
+
+
 ### `statsite`
 
 These `telemetry` parameters apply to
@@ -94,11 +108,24 @@ These `telemetry` parameters apply to
 - `datadog_address` `(string: "")` - Specifies the address of a DataDog statsd
   server to forward metrics to.
 
+- `datadog_tags` `(list: [])` - Specifies a list of global tags that will be
+  added to all telemetry packets sent to DogStatsD. It is a list of strings,
+  where each string looks like "my_tag_name:my_tag_value".
+
+
 ```hcl
 telemetry {
   datadog_address = "dogstatsd.company.local:8125"
+  datadog_tags = ["my_tag_name:my_tag_value"]
 }
 ```
+
+### `prometheus`
+
+These `telemetry` parameters apply to [Prometheus](https://prometheus.io).
+
+- `prometheus_metrics` `(bool: false)` - Specifies whether the agent should
+  make Prometheus formatted metrics available at `/v1/metrics?format=prometheus`.
 
 ### `circonus`
 

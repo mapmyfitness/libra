@@ -3,15 +3,15 @@ package allocdir
 import (
 	"archive/tar"
 	"bytes"
+	"context"
 	"io"
 	"io/ioutil"
 	"log"
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
-
-	tomb "gopkg.in/tomb.v1"
 
 	cstructs "github.com/hashicorp/nomad/client/structs"
 	"github.com/hashicorp/nomad/client/testutil"
@@ -20,11 +20,6 @@ import (
 )
 
 var (
-	osMountSharedDirSupport = map[string]bool{
-		"darwin": true,
-		"linux":  true,
-	}
-
 	t1 = &structs.Task{
 		Name:   "web",
 		Driver: "exec",
@@ -186,7 +181,7 @@ func TestAllocDir_Snapshot(t *testing.T) {
 	// Write a symlink to the task local
 	link1 := "baz"
 	if err := os.Symlink("bar", filepath.Join(td1.LocalDir, link1)); err != nil {
-		t.Fatalf("couldn't write symlink to task local dirctory :%v", err)
+		t.Fatalf("couldn't write symlink to task local directory :%v", err)
 	}
 
 	var b bytes.Buffer
@@ -318,13 +313,12 @@ func TestAllocDir_EscapeChecking(t *testing.T) {
 	}
 
 	// BlockUntilExists
-	tomb := tomb.Tomb{}
-	if _, err := d.BlockUntilExists("../foo", &tomb); err == nil || !strings.Contains(err.Error(), "escapes") {
+	if _, err := d.BlockUntilExists(context.Background(), "../foo"); err == nil || !strings.Contains(err.Error(), "escapes") {
 		t.Fatalf("BlockUntilExists of escaping path didn't error: %v", err)
 	}
 
 	// ChangeEvents
-	if _, err := d.ChangeEvents("../foo", 0, &tomb); err == nil || !strings.Contains(err.Error(), "escapes") {
+	if _, err := d.ChangeEvents(context.Background(), "../foo", 0); err == nil || !strings.Contains(err.Error(), "escapes") {
 		t.Fatalf("ChangeEvents of escaping path didn't error: %v", err)
 	}
 }
@@ -379,6 +373,10 @@ func TestAllocDir_SplitPath(t *testing.T) {
 }
 
 func TestAllocDir_CreateDir(t *testing.T) {
+	if syscall.Geteuid() != 0 {
+		t.Skip("Must be root to run test")
+	}
+
 	dir, err := ioutil.TempDir("", "tmpdirtest")
 	if err != nil {
 		t.Fatalf("err: %v", err)

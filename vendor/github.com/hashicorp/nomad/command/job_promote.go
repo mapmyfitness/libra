@@ -5,7 +5,9 @@ import (
 	"strings"
 
 	"github.com/hashicorp/nomad/api"
+	"github.com/hashicorp/nomad/api/contexts"
 	flaghelper "github.com/hashicorp/nomad/helper/flag-helpers"
+	"github.com/posener/complete"
 )
 
 type JobPromoteCommand struct {
@@ -16,14 +18,14 @@ func (c *JobPromoteCommand) Help() string {
 	helpText := `
 Usage: nomad job promote [options] <job id>
 
-Promote is used to promote task groups in the most recent deployment for the
-given job. Promotion should occur when the deployment has placed canaries for a
-task group and those canaries have been deemed healthy. When a task group is
-promoted, the rolling upgrade of the remaining allocations is unblocked. If the
-canaries are found to be unhealthy, the deployment may either be failed using
-the "nomad deployment fail" command, the job can be failed forward by submitting
-a new version or failed backwards by reverting to an older version using the
-"nomad job revert" command.
+  Promote is used to promote task groups in the most recent deployment for the
+  given job. Promotion should occur when the deployment has placed canaries for a
+  task group and those canaries have been deemed healthy. When a task group is
+  promoted, the rolling upgrade of the remaining allocations is unblocked. If the
+  canaries are found to be unhealthy, the deployment may either be failed using
+  the "nomad deployment fail" command, the job can be failed forward by submitting
+  a new version or failed backwards by reverting to an older version using the
+  "nomad job revert" command.
 
 General Options:
 
@@ -50,11 +52,37 @@ func (c *JobPromoteCommand) Synopsis() string {
 	return "Promote a job's canaries"
 }
 
+func (c *JobPromoteCommand) AutocompleteFlags() complete.Flags {
+	return mergeAutocompleteFlags(c.Meta.AutocompleteFlags(FlagSetClient),
+		complete.Flags{
+			"-group":   complete.PredictAnything,
+			"-detach":  complete.PredictNothing,
+			"-verbose": complete.PredictNothing,
+		})
+}
+
+func (c *JobPromoteCommand) AutocompleteArgs() complete.Predictor {
+	return complete.PredictFunc(func(a complete.Args) []string {
+		client, err := c.Meta.Client()
+		if err != nil {
+			return nil
+		}
+
+		resp, _, err := client.Search().PrefixSearch(a.Last, contexts.Jobs, nil)
+		if err != nil {
+			return []string{}
+		}
+		return resp.Matches[contexts.Jobs]
+	})
+}
+
+func (c *JobPromoteCommand) Name() string { return "job promote" }
+
 func (c *JobPromoteCommand) Run(args []string) int {
 	var detach, verbose bool
 	var groups []string
 
-	flags := c.Meta.FlagSet("job promote", FlagSetClient)
+	flags := c.Meta.FlagSet(c.Name(), FlagSetClient)
 	flags.Usage = func() { c.Ui.Output(c.Help()) }
 	flags.BoolVar(&detach, "detach", false, "")
 	flags.BoolVar(&verbose, "verbose", false, "")
@@ -64,10 +92,11 @@ func (c *JobPromoteCommand) Run(args []string) int {
 		return 1
 	}
 
-	// Check that we got no arguments
+	// Check that we got exactly one argument
 	args = flags.Args()
 	if l := len(args); l != 1 {
-		c.Ui.Error(c.Help())
+		c.Ui.Error("This command takes one argument: <job id>")
+		c.Ui.Error(commandErrorText(c))
 		return 1
 	}
 

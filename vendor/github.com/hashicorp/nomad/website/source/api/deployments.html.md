@@ -3,7 +3,7 @@ layout: api
 page_title: Deployments - HTTP API
 sidebar_current: api-deployments
 description: |-
-  The /deployment are used to query for and interact with deployments.
+  The /deployment endpoints are used to query for and interact with deployments.
 ---
 
 # Deployments HTTP API
@@ -22,25 +22,25 @@ The table below shows this endpoint's support for
 [blocking queries](/api/index.html#blocking-queries) and
 [required ACLs](/api/index.html#acls).
 
-| Blocking Queries | ACL Required |
-| ---------------- | ------------ |
-| `YES`            | `none`       |
+| Blocking Queries | ACL Required         |
+| ---------------- | -------------------- |
+| `YES`            | `namespace:read-job` |
 
 ### Parameters
 
-- `prefix` `(string: "")`- Specifies a string to filter deployments on based on
+- `prefix` `(string: "")`- Specifies a string to filter deployments based on
   an index prefix. This is specified as a querystring parameter.
 
 ### Sample Request
 
 ```text
 $ curl \
-    https://nomad.rocks/v1/deployments
+    https://localhost:4646/v1/deployments
 ```
 
 ```text
 $ curl \
-    https://nomad.rocks/v1/deployments?prefix=25ba81c
+    https://localhost:4646/v1/deployments?prefix=25ba81c
 ```
 
 ### Sample Response
@@ -52,6 +52,7 @@ $ curl \
     "JobID": "example",
     "JobVersion": 1,
     "JobModifyIndex": 17,
+    "JobSpecModifyIndex": 17,
     "JobCreateIndex": 7,
     "TaskGroups": {
       "cache": {
@@ -83,9 +84,9 @@ The table below shows this endpoint's support for
 [blocking queries](/api/index.html#blocking-queries) and
 [required ACLs](/api/index.html#acls).
 
-| Blocking Queries | ACL Required |
-| ---------------- | ------------ |
-| `YES`            | `none`       |
+| Blocking Queries | ACL Required         |
+| ---------------- | -------------------- |
+| `YES`            | `namespace:read-job` |
 
 ### Parameters
 
@@ -97,7 +98,7 @@ The table below shows this endpoint's support for
 
 ```text
 $ curl \
-    https://nomad.rocks/v1/deployment/70638f62-5c19-193e-30d6-f9d6e689ab8e
+    https://localhost:4646/v1/deployment/70638f62-5c19-193e-30d6-f9d6e689ab8e
 ```
 
 ### Sample Response
@@ -108,6 +109,7 @@ $ curl \
   "JobID": "example",
   "JobVersion": 1,
   "JobModifyIndex": 17,
+  "JobSpecModifyIndex": 17,
   "JobCreateIndex": 7,
   "TaskGroups": {
     "cache": {
@@ -139,9 +141,9 @@ The table below shows this endpoint's support for
 [blocking queries](/api/index.html#blocking-queries) and
 [required ACLs](/api/index.html#acls).
 
-| Blocking Queries | ACL Required |
-| ---------------- | ------------ |
-| `YES`            | `none`       |
+| Blocking Queries | ACL Required         |
+| ---------------- | -------------------- |
+| `YES`            | `namespace:read-job` |
 
 ### Parameters
 
@@ -153,7 +155,7 @@ The table below shows this endpoint's support for
 
 ```text
 $ curl \
-    https://nomad.rocks/v1/deployment/allocations/5456bd7a-9fc0-c0dd-6131-cbee77f57577
+    https://localhost:4646/v1/deployment/allocations/5456bd7a-9fc0-c0dd-6131-cbee77f57577
 ```
 
 ### Sample Response
@@ -253,7 +255,8 @@ $ curl \
     "DeploymentStatus": null,
     "CreateIndex": 19,
     "ModifyIndex": 22,
-    "CreateTime": 1498775380678486300
+    "CreateTime": 1498775380678486300,
+    "ModifyTime": 1498775380678486300
   }
 ]
 ```
@@ -262,7 +265,9 @@ $ curl \
 
 This endpoint is used to mark a deployment as failed. This should be done to
 force the scheduler to stop creating allocations as part of the deployment or to
-cause a rollback to a previous job version.
+cause a rollback to a previous job version. This endpoint only triggers a rollback
+if the most recent stable version of the job has a different specification than
+the job being reverted.
 
 | Method  | Path                                 | Produces                   |
 | ------- | ------------------------------------ | -------------------------- |
@@ -272,9 +277,9 @@ The table below shows this endpoint's support for
 [blocking queries](/api/index.html#blocking-queries) and
 [required ACLs](/api/index.html#acls).
 
-| Blocking Queries | ACL Required |
-| ---------------- | ------------ |
-| `NO`             | `none`       |
+| Blocking Queries | ACL Required           |
+| ---------------- | ---------------------- |
+| `NO`             | `namespace:submit-job` |
 
 ### Parameters
 
@@ -287,7 +292,7 @@ The table below shows this endpoint's support for
 ```text
 $ curl \
     --request POST \
-    https://nomad.rocks/v1/deployment/fail/5456bd7a-9fc0-c0dd-6131-cbee77f57577
+    https://localhost:4646/v1/deployment/fail/5456bd7a-9fc0-c0dd-6131-cbee77f57577
 ```
 
 ### Sample Response
@@ -315,15 +320,15 @@ The table below shows this endpoint's support for
 [blocking queries](/api/index.html#blocking-queries) and
 [required ACLs](/api/index.html#acls).
 
-| Blocking Queries | ACL Required |
-| ---------------- | ------------ |
-| `NO`             | `none`       |
+| Blocking Queries | ACL Required           |
+| ---------------- | ---------------------- |
+| `NO`             | `namespace:submit-job` |
 
 ### Parameters
 
 - `:deployment_id` `(string: <required>)`- Specifies the UUID of the deployment.
   This must be the full UUID, not the short 8-character one. This is specified
-  as part of the path.
+  as part of the path and in the JSON payload.
 
 - `Pause` `(bool: false)` - Specifies whether to pause or resume the deployment.
 
@@ -331,6 +336,7 @@ The table below shows this endpoint's support for
 
 ```javascript
 {
+  "DeploymentID": "5456bd7a-9fc0-c0dd-6131-cbee77f57577",
   "Pause": true
 }
 ```      
@@ -340,7 +346,7 @@ The table below shows this endpoint's support for
 ```text
 $ curl \
     --request POST \
-    https://nomad.rocks/v1/deployment/pause/5456bd7a-9fc0-c0dd-6131-cbee77f57577
+    https://localhost:4646/v1/deployment/pause/5456bd7a-9fc0-c0dd-6131-cbee77f57577
 ```
 
 ### Sample Response
@@ -368,15 +374,15 @@ The table below shows this endpoint's support for
 [blocking queries](/api/index.html#blocking-queries) and
 [required ACLs](/api/index.html#acls).
 
-| Blocking Queries | ACL Required |
-| ---------------- | ------------ |
-| `NO`             | `none`       |
+| Blocking Queries | ACL Required           |
+| ---------------- | ---------------------- |
+| `NO`             | `namespace:submit-job` |
 
 ### Parameters
 
 - `:deployment_id` `(string: <required>)`- Specifies the UUID of the deployment.
   This must be the full UUID, not the short 8-character one. This is specified
-  as part of the path.
+  as part of the path and JSON payload.
 
 - `All` `(bool: false)` - Specifies whether all task groups should be promoted.
 
@@ -387,12 +393,14 @@ The table below shows this endpoint's support for
 
 ```javascript
 {
+  "DeploymentID": "5456bd7a-9fc0-c0dd-6131-cbee77f57577",
   "All": true
 }
 ```      
 
 ```javascript
 {
+  "DeploymentID": "5456bd7a-9fc0-c0dd-6131-cbee77f57577",
   "Groups": ["web", "api-server"]
 }
 ```      
@@ -402,7 +410,7 @@ The table below shows this endpoint's support for
 ```text
 $ curl \
     --request POST \
-    https://nomad.rocks/v1/deployment/promote/5456bd7a-9fc0-c0dd-6131-cbee77f57577
+    https://localhost:4646/v1/deployment/promote/5456bd7a-9fc0-c0dd-6131-cbee77f57577
 ```
 
 ### Sample Response
@@ -424,7 +432,8 @@ may not be desired. As such those task groups can be marked with an upgrade
 policy that uses `health_check = "manual"`. Those allocations must have their
 health marked manually using this endpoint. Marking an allocation as healthy
 will allow the rolling upgrade to proceed. Marking it as failed will cause the
-deployment to fail.
+deployment to fail. This endpoint only triggers a rollback if the most recent stable
+version of the job has a different specification than the job being reverted.
 
 | Method  | Path                                              | Produces                   |
 | ------- | ------------------------------------------------- | -------------------------- |
@@ -434,15 +443,15 @@ The table below shows this endpoint's support for
 [blocking queries](/api/index.html#blocking-queries) and
 [required ACLs](/api/index.html#acls).
 
-| Blocking Queries | ACL Required |
-| ---------------- | ------------ |
-| `NO`             | `none`       |
+| Blocking Queries | ACL Required           |
+| ---------------- | ---------------------- |
+| `NO`             | `namespace:submit-job` |
 
 ### Parameters
 
 - `:deployment_id` `(string: <required>)`- Specifies the UUID of the deployment.
   This must be the full UUID, not the short 8-character one. This is specified
-  as part of the path.
+  as part of the path and the JSON payload.
 
 - `HealthyAllocationIDs` `(array<string>: nil)` - Specifies the set of
   allocation that should be marked as healthy.
@@ -454,6 +463,7 @@ The table below shows this endpoint's support for
 
 ```javascript
 {
+  "DeploymentID": "5456bd7a-9fc0-c0dd-6131-cbee77f57577",
   "HealthyAllocationIDs": [
     "eb13bc8a-7300-56f3-14c0-d4ad115ec3f5",
     "6584dad8-7ae3-360f-3069-0b4309711cc1"
@@ -466,7 +476,7 @@ The table below shows this endpoint's support for
 ```text
 $ curl \
     --request POST \
-    https://nomad.rocks/v1/deployment/allocation-health/5456bd7a-9fc0-c0dd-6131-cbee77f57577
+    https://localhost:4646/v1/deployment/allocation-health/5456bd7a-9fc0-c0dd-6131-cbee77f57577
 ```
 
 ### Sample Response

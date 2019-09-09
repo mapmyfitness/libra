@@ -5,8 +5,8 @@ import (
 	"fmt"
 
 	log "github.com/sirupsen/logrus"
-	"github.com/underarmour/libra/graphite"
-	"github.com/underarmour/libra/structs"
+	"github.com/YotpoLtd/libra/graphite"
+	"github.com/YotpoLtd/libra/structs"
 )
 
 // GraphiteConfig is the configuration for a Graphite backend

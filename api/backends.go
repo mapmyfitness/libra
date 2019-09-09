@@ -7,8 +7,8 @@ import (
 
 	"github.com/ant0ine/go-json-rest/rest"
 	log "github.com/sirupsen/logrus"
-	"github.com/underarmour/libra/backend"
-	"github.com/underarmour/libra/config"
+	"github.com/YotpoLtd/libra/backend"
+	"github.com/YotpoLtd/libra/config"
 )
 
 type BackendResponse struct {

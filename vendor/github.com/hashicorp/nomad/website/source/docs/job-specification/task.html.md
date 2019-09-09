@@ -9,6 +9,14 @@ description: |-
 
 # `task` Stanza
 
+<table class="table table-bordered table-striped">
+  <tr>
+    <th width="120">Placement</th>
+    <td>
+      <code>job -> group -> **task**</code>
+    </td>
+  </tr>
+</table>
 The `task` stanza creates an individual unit of work, such as a Docker
 container, web application, or batch processing.
 
@@ -54,6 +62,10 @@ job "docs" {
   [`max_kill_timeout`][max_kill] on the agent running the task, which has a
   default value of 30 seconds.
 
+- `kill_signal` `(string)` - Specifies a configurable kill signal for a task,
+  where the default is SIGINT. Note that this is only supported for drivers
+  sending signals (currently `docker`, `exec`, `raw_exec`, and `java` drivers).
+
 - `leader` `(bool: false)` - Specifies whether the task is the leader task of
   the task group. If set to true, when the leader task completes, all other
   tasks within the task group will be gracefully shutdown.
@@ -70,6 +82,12 @@ job "docs" {
 - `service` <code>([Service][]: nil)</code> - Specifies integrations with
   [Consul][] for service discovery. Nomad automatically registers when a task
   is started and de-registers it when the task dies.
+
+- `shutdown_delay` `(string: "0s")` - Specifies the duration to wait when
+  killing a task between removing it from Consul and sending it a shutdown
+  signal. Ideally services would fail healthchecks once they receive a shutdown
+  signal. Alternatively `shutdown_delay` may be set to give in flight requests
+  time to complete before shutting down.
 
 - `user` `(string: <varies>)` - Specifies the user that will run the task.
   Defaults to `nobody` for the [`exec`][exec] and [`java`][java] drivers.

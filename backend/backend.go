@@ -6,8 +6,8 @@ import (
 
 	log "github.com/sirupsen/logrus"
 
-	"github.com/underarmour/libra/config"
-	"github.com/underarmour/libra/structs"
+	"github.com/YotpoLtd/libra/config"
+	"github.com/YotpoLtd/libra/structs"
 )
 
 // ConfiguredBackends struct
@@ -64,6 +64,49 @@ func InitializeBackends(backends map[string]structs.Backend) (ConfiguredBackends
 				Host:     conf.Host,
 				Username: conf.Username,
 				Password: password,
+			})
+			if err != nil {
+				return nil, fmt.Errorf("Bad configuration for %s: %s", name, err)
+			}
+
+			configuredBackends[name] = connection
+
+		case "influxdb":
+			c, err := config.NewConfig(os.Getenv("LIBRA_CONFIG_DIR"))
+			if err != nil {
+				log.Errorf("Failed to read or parse config file: %s", err)
+				return nil, err
+			}
+
+			conf := c.Backends[name]
+
+			var influxDbUserName, influxDbPassword string
+
+			if envInfluxDbUserName := os.Getenv("INFLUX_USERNAME"); envInfluxDbUserName != "" {
+				influxDbUserName = envInfluxDbUserName
+			} else {
+				influxDbUserName = conf.Username
+			}
+
+			if envInfluxDbPassword := os.Getenv("INFLUX_PASSWORD"); envInfluxDbPassword != "" {
+				influxDbPassword = envInfluxDbPassword
+			} else {
+				influxDbPassword = conf.Password
+			}
+
+			userAgent := conf.UserAgent
+			if userAgent == "" {
+				userAgent = "libra"
+			}
+
+			connection, err := NewInfluxDbBackend(name, InfluxDbConfig{
+				Addr:      conf.Addr,
+				Kind:      conf.Kind,
+				Name:      conf.Name,
+				Password:  influxDbPassword,
+				Timeout:   conf.Timeout,
+				UserAgent: userAgent,
+				Username:  influxDbUserName,
 			})
 			if err != nil {
 				return nil, fmt.Errorf("Bad configuration for %s: %s", name, err)

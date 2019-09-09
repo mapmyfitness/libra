@@ -6,7 +6,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hashicorp/consul/agent/consul/structs"
+	"github.com/hashicorp/consul/acl"
+	"github.com/hashicorp/consul/agent/consul/autopilot"
+	"github.com/hashicorp/consul/agent/structs"
 	"github.com/hashicorp/consul/testrpc"
 	"github.com/hashicorp/consul/testutil/retry"
 	"github.com/hashicorp/net-rpc-msgpackrpc"
@@ -28,7 +30,7 @@ func TestOperator_Autopilot_GetConfiguration(t *testing.T) {
 	arg := structs.DCSpecificRequest{
 		Datacenter: "dc1",
 	}
-	var reply structs.AutopilotConfig
+	var reply autopilot.Config
 	err := msgpackrpc.CallWithCodec(codec, "Operator.AutopilotGetConfiguration", &arg, &reply)
 	if err != nil {
 		t.Fatalf("err: %v", err)
@@ -57,9 +59,9 @@ func TestOperator_Autopilot_GetConfiguration_ACLDeny(t *testing.T) {
 	arg := structs.DCSpecificRequest{
 		Datacenter: "dc1",
 	}
-	var reply structs.AutopilotConfig
+	var reply autopilot.Config
 	err := msgpackrpc.CallWithCodec(codec, "Operator.AutopilotGetConfiguration", &arg, &reply)
-	if err == nil || !strings.Contains(err.Error(), permissionDenied) {
+	if !acl.IsErrPermissionDenied(err) {
 		t.Fatalf("err: %v", err)
 	}
 
@@ -111,7 +113,7 @@ func TestOperator_Autopilot_SetConfiguration(t *testing.T) {
 	// Change the autopilot config from the default
 	arg := structs.AutopilotSetConfigRequest{
 		Datacenter: "dc1",
-		Config: structs.AutopilotConfig{
+		Config: autopilot.Config{
 			CleanupDeadServers: true,
 		},
 	}
@@ -150,13 +152,13 @@ func TestOperator_Autopilot_SetConfiguration_ACLDeny(t *testing.T) {
 	// Try to set config without permissions
 	arg := structs.AutopilotSetConfigRequest{
 		Datacenter: "dc1",
-		Config: structs.AutopilotConfig{
+		Config: autopilot.Config{
 			CleanupDeadServers: true,
 		},
 	}
 	var reply *bool
 	err := msgpackrpc.CallWithCodec(codec, "Operator.AutopilotSetConfiguration", &arg, &reply)
-	if err == nil || !strings.Contains(err.Error(), permissionDenied) {
+	if !acl.IsErrPermissionDenied(err) {
 		t.Fatalf("err: %v", err)
 	}
 
@@ -231,7 +233,7 @@ func TestOperator_ServerHealth(t *testing.T) {
 		arg := structs.DCSpecificRequest{
 			Datacenter: "dc1",
 		}
-		var reply structs.OperatorHealthReply
+		var reply autopilot.OperatorHealthReply
 		err := msgpackrpc.CallWithCodec(codec, "Operator.ServerHealth", &arg, &reply)
 		if err != nil {
 			r.Fatalf("err: %v", err)
@@ -273,7 +275,7 @@ func TestOperator_ServerHealth_UnsupportedRaftVersion(t *testing.T) {
 	arg := structs.DCSpecificRequest{
 		Datacenter: "dc1",
 	}
-	var reply structs.OperatorHealthReply
+	var reply autopilot.OperatorHealthReply
 	err := msgpackrpc.CallWithCodec(codec, "Operator.ServerHealth", &arg, &reply)
 	if err == nil || !strings.Contains(err.Error(), "raft_protocol set to 3 or higher") {
 		t.Fatalf("bad: %v", err)

@@ -12,7 +12,7 @@ import (
 	"encoding/json"
 
 	"github.com/mitchellh/cli"
-	"github.com/underarmour/libra/api"
+	"github.com/YotpoLtd/libra/api"
 )
 
 // SetCapacityCommand is a Command implementation prints the version.
