@@ -63,3 +63,7 @@
 [[constraint]]
   name = "github.com/ugorji/go"
   revision = "0053ebfd9d0ee06ccefbfe17072021e1d4acebee"
+
+[[constraint]]
+  name = "github.com/prometheus/client_golang"
+  version = "0.8.0"
