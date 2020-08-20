@@ -6,11 +6,11 @@ import (
 
 	"errors"
 
+	"github.com/YotpoLtd/libra/structs"
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/cloudwatch"
 	log "github.com/sirupsen/logrus"
-	"github.com/YotpoLtd/libra/structs"
 )
 
 // CloudWatchConfig is the configuration for a CloudWatch backend
@@ -55,22 +55,22 @@ func (b *CloudWatchBackend) GetValue(rule structs.Rule) (float64, error) {
 		return 0.0, fmt.Errorf("Missing metric_namespace inside config{} stanza for rule %s", rule.Name)
 	}
 
-	dimensionName := rule.DimensionName
-	if dimensionName == "" {
-		return 0.0, fmt.Errorf("Missing dimension_name inside config{} stanza")
+	dimensions := rule.Dimensions
+	if dimensions == nil {
+		return 0.0, fmt.Errorf("missing dimensions inside config{} stanza")
 	}
 
-	dimensionValue := rule.DimensionValue
-	if dimensionValue == "" {
-		return 0.0, fmt.Errorf("Missing dimension_value inside config{} stanza")
+	var dimensionsSlice []*cloudwatch.Dimension
+	for name, value := range dimensions {
+		dimension := &cloudwatch.Dimension{
+			Name:  aws.String(name),
+			Value: aws.String(value),
+		}
+		dimensionsSlice = append(dimensionsSlice, dimension)
 	}
 
-	dimension := &cloudwatch.Dimension{
-		Name:  aws.String(dimensionName),
-		Value: aws.String(dimensionValue),
-	}
 	dinput := &cloudwatch.GetMetricStatisticsInput{
-		Dimensions: []*cloudwatch.Dimension{dimension},
+		Dimensions: dimensionsSlice,
 		EndTime:    aws.Time(time.Now().UTC()),
 		MetricName: aws.String(metricName),
 		Namespace:  aws.String(metricNamespace),

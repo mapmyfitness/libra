@@ -11,8 +11,7 @@ type Rule struct {
 	ActionValue     int               `hcl:"action_value,int"`
 	MetricName      string            `hcl:"metric_name"`
 	MetricNamespace string            `hcl:"metric_namespace"`
-	DimensionName   string            `hcl:"dimension_name"`
-	DimensionValue  string            `hcl:"dimension_value"`
+	Dimensions      map[string]string `hcl:"dimensions"`
 	Period          string            `hcl:"cron"`
 	MeasurementName string            `hcl:"measurement_name"`
 	DatabaseName    string            `hcl:"database_name"`
